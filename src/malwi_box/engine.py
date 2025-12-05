@@ -43,16 +43,37 @@ class BoxEngine:
     def _default_config(self) -> dict[str, Any]:
         """Return default configuration with workdir permissions."""
         workdir_str = str(self.workdir)
+
+        # Get Python's standard library paths
+        stdlib_paths = []
+        try:
+            import sysconfig
+            stdlib = sysconfig.get_path("stdlib")
+            if stdlib:
+                stdlib_paths.append(stdlib)
+            purelib = sysconfig.get_path("purelib")
+            if purelib:
+                stdlib_paths.append(purelib)
+            platlib = sysconfig.get_path("platlib")
+            if platlib:
+                stdlib_paths.append(platlib)
+        except Exception:
+            pass
+
+        # Also include common system paths for reading
+        read_paths = [workdir_str] + stdlib_paths
+
         return {
             "allow_file_reads": [],
             "allow_file_writes": [],
             "allow_file_changes": [],
-            "allow_dir_reads": [workdir_str],
+            "allow_dir_reads": read_paths,
             "allow_dir_writes": [workdir_str],
             "allow_dir_changes": [workdir_str],
             "allow_env_var_reads": [],
             "allow_env_var_writes": [],
             "allow_pypi_requests": True,
+            "allow_hosts": [],
             "allow_system_commands": [],
         }
 
@@ -265,7 +286,11 @@ class BoxEngine:
             if host in PYPI_HOSTS:
                 return True
 
-        # Currently only PyPI is configurable; other hosts are blocked
+        # Check allowed hosts list
+        allowed_hosts = self.config.get("allow_hosts", [])
+        if host in allowed_hosts:
+            return True
+
         return False
 
     def check_permission(self, event: str, args: tuple) -> bool:
@@ -361,6 +386,11 @@ class BoxEngine:
                 key = details.get("key")
                 if key and key not in config.get("allow_env_var_writes", []):
                     config.setdefault("allow_env_var_writes", []).append(key)
+
+            elif event == "socket.connect":
+                host = details.get("host")
+                if host and host not in config.get("allow_hosts", []):
+                    config.setdefault("allow_hosts", []).append(host)
 
         # Write updated config
         try:

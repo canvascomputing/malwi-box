@@ -56,6 +56,7 @@ try:
         except (EOFError, KeyboardInterrupt):
             print("\\nAborted.", file=sys.stderr)
             sys.stderr.flush()
+            _engine.save_decisions()  # Save before exit
             os._exit(130)
 
         if response == "a":
@@ -71,10 +72,17 @@ try:
                     details["command"] = " ".join([str(args[0])] + [str(a) for a in (args[1] if len(args) > 1 else [])])
             elif event in ("os.putenv", "os.unsetenv") and args:
                 details["key"] = str(args[0])
+            elif event == "socket.connect" and len(args) >= 2:
+                addr = args[1]
+                if isinstance(addr, tuple) and len(addr) >= 1:
+                    details["host"] = str(addr[0])
+                    if len(addr) >= 2:
+                        details["port"] = addr[1]
             _engine.record_decision(event, args, allowed=True, details=details)
         elif response != "y":
             print("Denied. Terminating.", file=sys.stderr)
             sys.stderr.flush()
+            _engine.save_decisions()  # Save before exit
             os._exit(1)
 
     def _save_on_exit():
