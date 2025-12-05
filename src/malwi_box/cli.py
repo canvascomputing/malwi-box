@@ -38,6 +38,58 @@ _REVIEW_BLOCKLIST = {
     "builtins.input/result",
 }
 
+def _format_event(event, args):
+    \"\"\"Format audit event for human-readable output.\"\"\"
+    if event == "open" and args:
+        path = args[0]
+        mode = args[1] if len(args) > 1 else "r"
+        if isinstance(path, bytes):
+            path = path.decode("utf-8", errors="replace")
+        is_write = any(c in str(mode) for c in "wax+")
+        if is_write:
+            from pathlib import Path as _Path
+            action = "Create" if not _Path(path).exists() else "Modify"
+            return f"{action} file: {path}"
+        return f"Read file: {path}"
+
+    elif event == "os.putenv" and args:
+        key = args[0].decode() if isinstance(args[0], bytes) else args[0]
+        val = args[1].decode() if isinstance(args[1], bytes) else args[1]
+        if len(val) > 50:
+            val = val[:47] + "..."
+        return f"Set env var: {key}={val}"
+
+    elif event == "os.unsetenv" and args:
+        key = args[0].decode() if isinstance(args[0], bytes) else args[0]
+        return f"Unset env var: {key}"
+
+    elif event == "socket.getaddrinfo" and args:
+        host = args[0]
+        port = args[1] if len(args) > 1 else ""
+        if port:
+            return f"DNS lookup: {host}:{port}"
+        return f"DNS lookup: {host}"
+
+    elif event == "socket.gethostbyname" and args:
+        return f"DNS lookup: {args[0]}"
+
+    elif event == "subprocess.Popen" and args:
+        exe = args[0]
+        cmd_args = args[1] if len(args) > 1 else []
+        cmd = " ".join([str(exe)] + [str(a) for a in cmd_args])
+        if len(cmd) > 80:
+            cmd = cmd[:77] + "..."
+        return f"Run command: {cmd}"
+
+    elif event == "os.system" and args:
+        cmd = str(args[0])
+        if len(cmd) > 80:
+            cmd = cmd[:77] + "..."
+        return f"Run command: {cmd}"
+
+    # Fallback for unknown events
+    return f"{event}: {args}"
+
 try:
     from malwi_box import install_hook
     from malwi_box.engine import BoxEngine
@@ -50,7 +102,7 @@ try:
             return
 
         # Not in config - ask user
-        print(f"[AUDIT] {event}: {args}", file=sys.stderr)
+        print(f"[AUDIT] {_format_event(event, args)}", file=sys.stderr)
         try:
             response = input("Allow? [y/N/a(lways)]: ").strip().lower()
         except (EOFError, KeyboardInterrupt):
@@ -99,10 +151,18 @@ except ImportError as e:
 """
 
 
-def _run_with_hook(script: str, script_args: list[str], template: str) -> int:
-    """Run a script with the specified sitecustomize template."""
-    if not os.path.isfile(script):
-        print(f"Error: Script not found: {script}", file=sys.stderr)
+def _run_with_hook(command: list[str], template: str) -> int:
+    """Run a command with the specified sitecustomize template.
+
+    Args:
+        command: Command to run. Can be a script path or module name with args.
+        template: The sitecustomize template to inject.
+
+    If command[0] is a .py file, runs: python <script> <args>
+    Otherwise, runs: python -m <module> <args>
+    """
+    if not command:
+        print("Error: No command specified", file=sys.stderr)
         return 1
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -117,7 +177,14 @@ def _run_with_hook(script: str, script_args: list[str], template: str) -> int:
         else:
             env["PYTHONPATH"] = tmpdir
 
-        cmd = [sys.executable, script] + script_args
+        first = command[0]
+
+        # If it looks like a Python script, run directly; otherwise use -m
+        if first.endswith(".py") or os.path.isfile(first):
+            cmd = [sys.executable] + command
+        else:
+            cmd = [sys.executable, "-m"] + command
+
         try:
             result = subprocess.run(cmd, env=env)
             return result.returncode
@@ -127,36 +194,51 @@ def _run_with_hook(script: str, script_args: list[str], template: str) -> int:
 
 
 def run_command(args: argparse.Namespace) -> int:
-    """Run script with passive audit logging."""
-    return _run_with_hook(args.script, args.args, RUN_SITECUSTOMIZE_TEMPLATE)
+    """Run command with config-based permission enforcement."""
+    return _run_with_hook(args.command, RUN_SITECUSTOMIZE_TEMPLATE)
 
 
 def review_command(args: argparse.Namespace) -> int:
-    """Run script with interactive approval for each audit event."""
-    return _run_with_hook(args.script, args.args, REVIEW_SITECUSTOMIZE_TEMPLATE)
+    """Run command with interactive approval for each audit event."""
+    return _run_with_hook(args.command, REVIEW_SITECUSTOMIZE_TEMPLATE)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Python audit hook sandbox")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    parser = argparse.ArgumentParser(
+        description="Python audit hook sandbox",
+        usage="%(prog)s {run,review} <command> [args...]",
+    )
+    subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
     # run subcommand
-    run_parser = subparsers.add_parser("run", help="Run script with audit logging")
-    run_parser.add_argument("script", help="Python script to run")
-    run_parser.add_argument("args", nargs="*", help="Arguments for the script")
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Run command with config-based enforcement",
+        usage="%(prog)s <script.py|module> [args...]",
+    )
+    run_parser.add_argument(
+        "command",
+        nargs=argparse.REMAINDER,
+        help="Python script or module to run (e.g., script.py or pip install)",
+    )
 
     # review subcommand
     review_parser = subparsers.add_parser(
-        "review", help="Run script with interactive approval"
+        "review",
+        help="Run command with interactive approval",
+        usage="%(prog)s <script.py|module> [args...]",
     )
-    review_parser.add_argument("script", help="Python script to run")
-    review_parser.add_argument("args", nargs="*", help="Arguments for the script")
+    review_parser.add_argument(
+        "command",
+        nargs=argparse.REMAINDER,
+        help="Python script or module to run (e.g., script.py or pip install)",
+    )
 
     args = parser.parse_args()
 
-    if args.command == "run":
+    if args.subcommand == "run":
         return run_command(args)
-    elif args.command == "review":
+    elif args.subcommand == "review":
         return review_command(args)
 
     return 1
