@@ -1,5 +1,6 @@
-from setuptools import setup, Extension
 import sys
+
+from setuptools import Extension, setup
 
 extra_compile_args = []
 if sys.platform != "win32":

@@ -1,12 +1,6 @@
 """Tests for BoxEngine permission enforcement."""
 
 import json
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
-
-import pytest
 
 from malwi_box.engine import BoxEngine
 

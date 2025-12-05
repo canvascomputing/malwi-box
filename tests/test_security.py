@@ -7,8 +7,6 @@ by using dangerous operations like adding new hooks or setting tracers.
 import subprocess
 import sys
 
-import pytest
-
 
 def run_sandboxed_code(code: str) -> tuple[int, str, str]:
     """Run code in a subprocess with malwi-box hook installed.

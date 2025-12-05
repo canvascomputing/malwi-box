@@ -13,7 +13,6 @@ Config to allow:
     "allow_create": ["/tmp"]
 """
 
-import tempfile
 import os
 
 

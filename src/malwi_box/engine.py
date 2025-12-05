@@ -169,7 +169,9 @@ class BoxEngine:
                 continue
         return False
 
-    def _check_path_permission(self, path: Path, allow_list: list, check_hash: bool = False) -> bool:
+    def _check_path_permission(
+        self, path: Path, allow_list: list, check_hash: bool = False
+    ) -> bool:
         """Check if a path is permitted by an allow list.
 
         Args:
@@ -184,9 +186,7 @@ class BoxEngine:
         if self._check_path_in_list(path, allow_list, check_hash=check_hash):
             return True
         # Check if path is within an allowed directory
-        if self._check_path_in_dir_list(path, allow_list):
-            return True
-        return False
+        return self._check_path_in_dir_list(path, allow_list)
 
     def _check_read_permission(self, path: Path) -> bool:
         """Check if reading a file is permitted."""
@@ -291,7 +291,8 @@ class BoxEngine:
         """Check if DNS resolution for a domain is permitted.
 
         Args:
-            args: Event arguments (host, port, ...) for getaddrinfo or (hostname,) for gethostbyname
+            args: Event arguments (host, port, ...) for getaddrinfo
+                  or (hostname,) for gethostbyname
             event: The audit event name
 
         Returns:
@@ -301,16 +302,15 @@ class BoxEngine:
             return True
 
         host = args[0]
-        # socket.getaddrinfo has port as second arg, gethostbyname doesn't have port
+        # socket.getaddrinfo has port as second arg
         port = args[1] if event == "socket.getaddrinfo" and len(args) > 1 else None
 
         if not host or not isinstance(host, str):
             return True
 
         # Allow PyPI domains (any port)
-        if self.config.get("allow_pypi_requests", False):
-            if host in PYPI_HOSTS:
-                return True
+        if self.config.get("allow_pypi_requests", False) and host in PYPI_HOSTS:
+            return True
 
         # Check allowed domains
         for entry in self.config.get("allow_domains", []):
@@ -404,7 +404,7 @@ class BoxEngine:
                 path = details.get("path")
                 if not path:
                     continue
-                mode = details.get("mode", "r")
+                mode = details.get("mode") or "r"
                 is_new = details.get("is_new_file", False)
                 is_write = any(c in mode for c in "wax+")
 
@@ -453,11 +453,9 @@ class BoxEngine:
         """
         allowed = self.config.get("allow_env_var_reads", [])
         # If no restrictions configured, allow all
-        if not allowed:
-            return True
         # If restrictions are configured, block by default
         # (The actual key is not easily accessible from the profile hook)
-        return False
+        return not allowed
 
     def create_hook(self, enforce: bool = True) -> callable:
         """Return a hook function that uses this engine.
