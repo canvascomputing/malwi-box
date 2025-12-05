@@ -72,12 +72,12 @@ try:
                     details["command"] = " ".join([str(args[0])] + [str(a) for a in (args[1] if len(args) > 1 else [])])
             elif event in ("os.putenv", "os.unsetenv") and args:
                 details["key"] = str(args[0])
-            elif event == "socket.connect" and len(args) >= 2:
-                addr = args[1]
-                if isinstance(addr, tuple) and len(addr) >= 1:
-                    details["host"] = str(addr[0])
-                    if len(addr) >= 2:
-                        details["port"] = addr[1]
+            elif event == "socket.getaddrinfo" and args:
+                details["domain"] = str(args[0])
+                if len(args) > 1 and args[1] is not None:
+                    details["port"] = args[1]
+            elif event == "socket.gethostbyname" and args:
+                details["domain"] = str(args[0])
             _engine.record_decision(event, args, allowed=True, details=details)
         elif response != "y":
             print("Denied. Terminating.", file=sys.stderr)

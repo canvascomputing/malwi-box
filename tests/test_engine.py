@@ -169,45 +169,89 @@ class TestSystemCommands:
         assert not engine.check_permission("os.system", ("rm -rf /",))
 
 
-class TestNetworkPermissions:
-    """Tests for network permission checks."""
+class TestDomainPermissions:
+    """Tests for domain permission checks via DNS resolution events."""
 
     def test_allow_pypi_when_enabled(self, tmp_path):
-        """Test that PyPI hosts are allowed when allow_pypi_requests is True."""
+        """Test that PyPI domains are allowed when allow_pypi_requests is True."""
         config = {"allow_pypi_requests": True}
         config_path = tmp_path / ".malwi-box"
         config_path.write_text(json.dumps(config))
 
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
-        # socket.connect event with PyPI address
-        assert engine.check_permission("socket.connect", (None, ("pypi.org", 443)))
+        # socket.getaddrinfo event with PyPI domain
+        assert engine.check_permission("socket.getaddrinfo", ("pypi.org", 443, 0, 1, 0))
         assert engine.check_permission(
-            "socket.connect", (None, ("files.pythonhosted.org", 443))
+            "socket.getaddrinfo", ("files.pythonhosted.org", 443, 0, 1, 0)
         )
+        # socket.gethostbyname event
+        assert engine.check_permission("socket.gethostbyname", ("pypi.org",))
 
     def test_block_pypi_when_disabled(self, tmp_path):
-        """Test that PyPI hosts are blocked when allow_pypi_requests is False."""
+        """Test that PyPI domains are blocked when allow_pypi_requests is False."""
         config = {"allow_pypi_requests": False}
         config_path = tmp_path / ".malwi-box"
         config_path.write_text(json.dumps(config))
 
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
-        assert not engine.check_permission("socket.connect", (None, ("pypi.org", 443)))
+        assert not engine.check_permission("socket.getaddrinfo", ("pypi.org", 443, 0, 1, 0))
+        assert not engine.check_permission("socket.gethostbyname", ("pypi.org",))
 
-    def test_block_unknown_hosts(self, tmp_path):
-        """Test that unknown hosts are blocked."""
+    def test_block_unknown_domains(self, tmp_path):
+        """Test that unknown domains are blocked."""
         config = {"allow_pypi_requests": True}
         config_path = tmp_path / ".malwi-box"
         config_path.write_text(json.dumps(config))
 
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
-        # Random host should be blocked
+        # Random domain should be blocked
         assert not engine.check_permission(
-            "socket.connect", (None, ("example.com", 80))
+            "socket.getaddrinfo", ("example.com", 80, 0, 1, 0)
         )
+        assert not engine.check_permission("socket.gethostbyname", ("example.com",))
+
+    def test_allow_domain_any_port(self, tmp_path):
+        """Test that domain without port allows any port."""
+        config = {"allow_domains": ["httpbin.org"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        assert engine.check_permission("socket.getaddrinfo", ("httpbin.org", 80, 0, 1, 0))
+        assert engine.check_permission("socket.getaddrinfo", ("httpbin.org", 443, 0, 1, 0))
+        assert engine.check_permission("socket.getaddrinfo", ("httpbin.org", 8080, 0, 1, 0))
+        assert engine.check_permission("socket.gethostbyname", ("httpbin.org",))
+
+    def test_allow_domain_specific_port(self, tmp_path):
+        """Test that domain:port only allows that specific port."""
+        config = {"allow_domains": ["api.example.com:443"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Correct port - allowed
+        assert engine.check_permission("socket.getaddrinfo", ("api.example.com", 443, 0, 1, 0))
+        # Wrong port - blocked
+        assert not engine.check_permission("socket.getaddrinfo", ("api.example.com", 80, 0, 1, 0))
+        # gethostbyname has no port, so domain:port entry allows it (port is None)
+        assert engine.check_permission("socket.gethostbyname", ("api.example.com",))
+
+    def test_allow_subdomain(self, tmp_path):
+        """Test that subdomains are allowed when parent domain is in list."""
+        config = {"allow_domains": ["example.com"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        assert engine.check_permission("socket.getaddrinfo", ("example.com", 443, 0, 1, 0))
+        assert engine.check_permission("socket.getaddrinfo", ("api.example.com", 443, 0, 1, 0))
+        assert engine.check_permission("socket.getaddrinfo", ("www.example.com", 80, 0, 1, 0))
 
 
 class TestEnvVarPermissions:
@@ -265,6 +309,42 @@ class TestDecisionRecording:
         saved_config = json.loads(config_path.read_text())
         assert "/tmp/test.txt" in saved_config.get("allow_file_reads", [])
         assert "git status" in saved_config.get("allow_system_commands", [])
+
+    def test_record_and_save_domain_with_port(self, tmp_path):
+        """Test that domain decisions with port are saved correctly."""
+        config_path = tmp_path / ".malwi-box"
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Record domain decision with port
+        engine.record_decision(
+            "socket.getaddrinfo",
+            ("httpbin.org", 443, 0, 1, 0),
+            allowed=True,
+            details={"domain": "httpbin.org", "port": 443},
+        )
+
+        engine.save_decisions()
+
+        saved_config = json.loads(config_path.read_text())
+        assert "httpbin.org:443" in saved_config.get("allow_domains", [])
+
+    def test_record_and_save_domain_without_port(self, tmp_path):
+        """Test that domain decisions without port are saved correctly."""
+        config_path = tmp_path / ".malwi-box"
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Record domain decision without port (gethostbyname)
+        engine.record_decision(
+            "socket.gethostbyname",
+            ("example.com",),
+            allowed=True,
+            details={"domain": "example.com"},
+        )
+
+        engine.save_decisions()
+
+        saved_config = json.loads(config_path.read_text())
+        assert "example.com" in saved_config.get("allow_domains", [])
 
 
 class TestUnhandledEvents:

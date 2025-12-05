@@ -9,6 +9,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 # PyPI-related hosts that are allowed when allow_pypi_requests is True
 PYPI_HOSTS = frozenset({
@@ -73,7 +74,7 @@ class BoxEngine:
             "allow_env_var_reads": [],
             "allow_env_var_writes": [],
             "allow_pypi_requests": True,
-            "allow_hosts": [],
+            "allow_domains": [],
             "allow_system_commands": [],
         }
 
@@ -270,26 +271,62 @@ class BoxEngine:
                 return True
         return False
 
-    def _check_network(self, args: tuple) -> bool:
-        """Check network connection permission."""
-        if len(args) < 2:
+    def _parse_domain_entry(self, entry: str) -> tuple[str, int | None]:
+        """Parse a domain entry which may include a port.
+
+        Supports formats:
+            - "example.com" -> ("example.com", None)
+            - "example.com:443" -> ("example.com", 443)
+
+        Args:
+            entry: Domain string, optionally with port.
+
+        Returns:
+            Tuple of (domain, port) where port is None if not specified.
+        """
+        # Prepend scheme so urlparse treats it as a netloc
+        parsed = urlparse(f"//{entry}")
+        domain = parsed.hostname or entry
+        port = parsed.port
+        return domain, port
+
+    def _check_domain(self, args: tuple, event: str) -> bool:
+        """Check if DNS resolution for a domain is permitted.
+
+        Args:
+            args: Event arguments (host, port, ...) for getaddrinfo or (hostname,) for gethostbyname
+            event: The audit event name
+
+        Returns:
+            True if allowed, False otherwise.
+        """
+        if not args:
             return True
 
-        address = args[1]
-        if not isinstance(address, tuple) or len(address) < 1:
+        host = args[0]
+        # socket.getaddrinfo has port as second arg, gethostbyname doesn't have port
+        port = args[1] if event == "socket.getaddrinfo" and len(args) > 1 else None
+
+        if not host or not isinstance(host, str):
             return True
 
-        host = str(address[0])
-
-        # Check PyPI requests
+        # Allow PyPI domains (any port)
         if self.config.get("allow_pypi_requests", False):
             if host in PYPI_HOSTS:
                 return True
 
-        # Check allowed hosts list
-        allowed_hosts = self.config.get("allow_hosts", [])
-        if host in allowed_hosts:
-            return True
+        # Check allowed domains
+        for entry in self.config.get("allow_domains", []):
+            allowed_domain, allowed_port = self._parse_domain_entry(entry)
+
+            if host == allowed_domain or host.endswith("." + allowed_domain):
+                # If entry specifies a port, check it matches
+                if allowed_port is not None:
+                    if port is None or port == allowed_port:
+                        return True
+                else:
+                    # No port specified - any port allowed
+                    return True
 
         return False
 
@@ -312,8 +349,8 @@ class BoxEngine:
             return self._check_env_read(args)
         elif event in ("subprocess.Popen", "os.system"):
             return self._check_system_command(event, args)
-        elif event == "socket.connect":
-            return self._check_network(args)
+        elif event in ("socket.getaddrinfo", "socket.gethostbyname"):
+            return self._check_domain(args, event)
 
         # Events not explicitly handled are allowed
         return True
@@ -387,10 +424,14 @@ class BoxEngine:
                 if key and key not in config.get("allow_env_var_writes", []):
                     config.setdefault("allow_env_var_writes", []).append(key)
 
-            elif event == "socket.connect":
-                host = details.get("host")
-                if host and host not in config.get("allow_hosts", []):
-                    config.setdefault("allow_hosts", []).append(host)
+            elif event in ("socket.getaddrinfo", "socket.gethostbyname"):
+                domain = details.get("domain")
+                port = details.get("port")
+                if domain:
+                    # Save as "domain:port" if port specified, otherwise just domain
+                    entry = f"{domain}:{port}" if port else domain
+                    if entry not in config.get("allow_domains", []):
+                        config.setdefault("allow_domains", []).append(entry)
 
         # Write updated config
         try:
