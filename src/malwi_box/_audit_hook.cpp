@@ -1,9 +1,12 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
+#include <string.h>
+#include <stdlib.h>
 
 // Module state structure
 typedef struct {
     PyObject *callback;  // User-provided Python callable
+    PyObject *blocklist; // Set of event names to block
     int hook_registered; // Whether the audit hook has been registered
 } AuditHookState;
 
@@ -15,8 +18,33 @@ static AuditHookState* get_state(PyObject *module) {
 // Global pointer to module for use in audit hook callback
 static PyObject *g_module = NULL;
 
+// Check if a string matches (for quick C-level checks)
+static inline int streq(const char *a, const char *b) {
+    return strcmp(a, b) == 0;
+}
+
+// Events that are blocked at the C level for security
+static inline int is_blocked_event(const char *event) {
+    return streq(event, "sys.addaudithook") ||
+           streq(event, "sys.setprofile") ||
+           streq(event, "sys.settrace");
+}
+
 // The C audit hook function registered with PySys_AddAuditHook
 static int audit_hook(const char *event, PyObject *args, void *userData) {
+    // Block dangerous events that could bypass security
+    // We terminate immediately because returning -1 causes issues with some events
+    if (is_blocked_event(event)) {
+        PySys_WriteStderr("[malwi-box] BLOCKED: %s - Terminating for security\n", event);
+        fflush(stderr);
+        _exit(77);  // Use _exit to terminate immediately without cleanup
+    }
+
+    // Skip if interpreter is finalizing to avoid accessing freed objects
+    if (_Py_IsFinalizing()) {
+        return 0;
+    }
+
     // Get the module from global pointer
     if (g_module == NULL) {
         return 0;
@@ -33,6 +61,16 @@ static int audit_hook(const char *event, PyObject *args, void *userData) {
         return 0;  // Don't abort on encoding errors
     }
 
+    // Check if event is in blocklist
+    if (state->blocklist != NULL) {
+        int contains = PySet_Contains(state->blocklist, event_str);
+        if (contains == 1) {
+            Py_DECREF(event_str);
+            return 0;  // Skip blocked event
+        }
+        // contains == -1 means error, but we'll continue anyway
+    }
+
     // Call the Python callback with (event, args)
     PyObject *result = PyObject_CallFunctionObjArgs(
         state->callback, event_str, args, NULL
@@ -42,10 +80,29 @@ static int audit_hook(const char *event, PyObject *args, void *userData) {
 
     if (result == NULL) {
         // Exception occurred in callback
-        // Check if it's a SystemExit or similar that should abort
-        if (PyErr_ExceptionMatches(PyExc_SystemExit) ||
-            PyErr_ExceptionMatches(PyExc_KeyboardInterrupt)) {
-            return -1;  // Abort the operation
+        if (PyErr_ExceptionMatches(PyExc_SystemExit)) {
+            // For SystemExit, extract the exit code and terminate immediately
+            PyObject *exc_type, *exc_value, *exc_tb;
+            PyErr_Fetch(&exc_type, &exc_value, &exc_tb);
+
+            int exit_code = 1;
+            if (exc_value != NULL) {
+                PyObject *code = PyObject_GetAttrString(exc_value, "code");
+                if (code != NULL && PyLong_Check(code)) {
+                    exit_code = (int)PyLong_AsLong(code);
+                }
+                Py_XDECREF(code);
+            }
+
+            Py_XDECREF(exc_type);
+            Py_XDECREF(exc_value);
+            Py_XDECREF(exc_tb);
+
+            _exit(exit_code);
+        }
+        if (PyErr_ExceptionMatches(PyExc_KeyboardInterrupt)) {
+            PyErr_Clear();
+            _exit(130);
         }
         // For other exceptions, print and continue
         PyErr_Print();
@@ -111,6 +168,54 @@ static PyObject* clear_callback(PyObject *self, PyObject *args) {
     Py_RETURN_NONE;
 }
 
+// Python-callable function to set the blocklist
+static PyObject* set_blocklist(PyObject *self, PyObject *args) {
+    PyObject *blocklist;
+
+    if (!PyArg_ParseTuple(args, "O", &blocklist)) {
+        return NULL;
+    }
+
+    // Accept None to clear, or a set/frozenset/list of strings
+    if (blocklist == Py_None) {
+        AuditHookState *state = get_state(self);
+        if (state == NULL) {
+            PyErr_SetString(PyExc_RuntimeError, "module state not available");
+            return NULL;
+        }
+        Py_XDECREF(state->blocklist);
+        state->blocklist = NULL;
+        Py_RETURN_NONE;
+    }
+
+    // Convert to a set if not already
+    PyObject *blocklist_set;
+    if (PySet_Check(blocklist) || PyFrozenSet_Check(blocklist)) {
+        blocklist_set = PySet_New(blocklist);
+    } else if (PyList_Check(blocklist) || PyTuple_Check(blocklist)) {
+        blocklist_set = PySet_New(blocklist);
+    } else {
+        PyErr_SetString(PyExc_TypeError, "blocklist must be a set, list, tuple, or None");
+        return NULL;
+    }
+
+    if (blocklist_set == NULL) {
+        return NULL;
+    }
+
+    AuditHookState *state = get_state(self);
+    if (state == NULL) {
+        Py_DECREF(blocklist_set);
+        PyErr_SetString(PyExc_RuntimeError, "module state not available");
+        return NULL;
+    }
+
+    Py_XDECREF(state->blocklist);
+    state->blocklist = blocklist_set;
+
+    Py_RETURN_NONE;
+}
+
 // Module methods
 static PyMethodDef module_methods[] = {
     {"set_callback", set_callback, METH_VARARGS,
@@ -119,6 +224,10 @@ static PyMethodDef module_methods[] = {
      "    callback: A callable that takes (event: str, args: tuple)\n"},
     {"clear_callback", clear_callback, METH_NOARGS,
      "Clear the audit hook callback (hook remains registered but inactive)."},
+    {"set_blocklist", set_blocklist, METH_VARARGS,
+     "Set a blocklist of event names to skip.\n\n"
+     "Args:\n"
+     "    blocklist: A set, list, or tuple of event names to block, or None to clear\n"},
     {NULL, NULL, 0, NULL}
 };
 
@@ -127,15 +236,22 @@ static int module_traverse(PyObject *module, visitproc visit, void *arg) {
     AuditHookState *state = get_state(module);
     if (state != NULL) {
         Py_VISIT(state->callback);
+        Py_VISIT(state->blocklist);
     }
     return 0;
 }
 
 // Module clear for GC
 static int module_clear(PyObject *module) {
+    // Clear global module pointer to prevent audit hook from accessing freed memory
+    if (g_module == module) {
+        Py_CLEAR(g_module);
+    }
+
     AuditHookState *state = get_state(module);
     if (state != NULL) {
         Py_CLEAR(state->callback);
+        Py_CLEAR(state->blocklist);
     }
     return 0;
 }
@@ -172,6 +288,7 @@ PyMODINIT_FUNC PyInit__audit_hook(void) {
     }
 
     state->callback = NULL;
+    state->blocklist = NULL;
     state->hook_registered = 0;
 
     return module;

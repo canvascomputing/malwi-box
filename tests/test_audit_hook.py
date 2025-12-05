@@ -62,3 +62,19 @@ def test_callback_must_be_callable():
     """Test that set_callback raises TypeError for non-callable."""
     with pytest.raises(TypeError):
         install_hook("not a callable")
+
+
+def test_blocklist_skips_events():
+    """Test that events in blocklist are not passed to callback."""
+    events = []
+
+    def hook(event, args):
+        events.append(event)
+
+    # Block 'exec' events
+    install_hook(hook, blocklist=["exec"])
+    exec("x = 1")
+    uninstall_hook()
+
+    # 'exec' should not be in captured events
+    assert "exec" not in events
