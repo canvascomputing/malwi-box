@@ -3,6 +3,59 @@ import os
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
+
+
+def _format_event(event: str, args: tuple) -> str:
+    """Format audit event for human-readable output."""
+    if event == "open" and args:
+        path = args[0]
+        mode = args[1] if len(args) > 1 else "r"
+        if isinstance(path, bytes):
+            path = path.decode("utf-8", errors="replace")
+        is_write = any(c in str(mode) for c in "wax+")
+        if is_write:
+            action = "Create" if not Path(path).exists() else "Modify"
+            return f"{action} file: {path}"
+        return f"Read file: {path}"
+
+    elif event == "os.putenv" and args:
+        key = args[0].decode() if isinstance(args[0], bytes) else args[0]
+        val = args[1].decode() if isinstance(args[1], bytes) else args[1]
+        if len(val) > 50:
+            val = val[:47] + "..."
+        return f"Set env var: {key}={val}"
+
+    elif event == "os.unsetenv" and args:
+        key = args[0].decode() if isinstance(args[0], bytes) else args[0]
+        return f"Unset env var: {key}"
+
+    elif event == "socket.getaddrinfo" and args:
+        host = args[0]
+        port = args[1] if len(args) > 1 else ""
+        if port:
+            return f"DNS lookup: {host}:{port}"
+        return f"DNS lookup: {host}"
+
+    elif event == "socket.gethostbyname" and args:
+        return f"DNS lookup: {args[0]}"
+
+    elif event == "subprocess.Popen" and args:
+        exe = args[0]
+        cmd_args = args[1] if len(args) > 1 else []
+        cmd = " ".join([str(exe)] + [str(a) for a in cmd_args])
+        if len(cmd) > 80:
+            cmd = cmd[:77] + "..."
+        return f"Run command: {cmd}"
+
+    elif event == "os.system" and args:
+        cmd = str(args[0])
+        if len(cmd) > 80:
+            cmd = cmd[:77] + "..."
+        return f"Run command: {cmd}"
+
+    # Fallback for unknown events
+    return f"{event}: {args}"
 
 # Template for run mode: Uses BoxEngine to enforce config-based permissions
 RUN_SITECUSTOMIZE_TEMPLATE = """\
@@ -194,52 +247,148 @@ def _run_with_hook(command: list[str], template: str) -> int:
 
 
 def run_command(args: argparse.Namespace) -> int:
-    """Run command with config-based permission enforcement."""
-    return _run_with_hook(args.command, RUN_SITECUSTOMIZE_TEMPLATE)
+    """Run command with sandboxing."""
+    command = list(args.command)
+    review = args.review
+
+    # Also check if --review is in command args (for convenience)
+    if "--review" in command:
+        command.remove("--review")
+        review = True
+
+    template = REVIEW_SITECUSTOMIZE_TEMPLATE if review else RUN_SITECUSTOMIZE_TEMPLATE
+    return _run_with_hook(command, template)
 
 
-def review_command(args: argparse.Namespace) -> int:
-    """Run command with interactive approval for each audit event."""
-    return _run_with_hook(args.command, REVIEW_SITECUSTOMIZE_TEMPLATE)
+def _ensure_pip() -> bool:
+    """Ensure pip is available, installing via ensurepip if needed."""
+    try:
+        import pip  # noqa: F401
+        return True
+    except ImportError:
+        pass
+
+    # Try to bootstrap pip
+    try:
+        import ensurepip
+        ensurepip.bootstrap(upgrade=True)
+        return True
+    except Exception as e:
+        print(f"Error: Could not install pip: {e}", file=sys.stderr)
+        return False
+
+
+def install_command(args: argparse.Namespace) -> int:
+    """Install package(s) with sandboxing using pip's Python API."""
+    if not _ensure_pip():
+        return 1
+
+    # Build pip arguments
+    pip_args = ["install"]
+    if args.requirements:
+        pip_args.extend(["-r", args.requirements])
+    elif args.package:
+        if args.pkg_version:
+            pip_args.append(f"{args.package}=={args.pkg_version}")
+        else:
+            pip_args.append(args.package)
+    else:
+        print("Error: Must specify package or -r/--requirements", file=sys.stderr)
+        return 1
+
+    # Import and configure engine
+    from malwi_box import install_hook
+    from malwi_box.engine import BoxEngine
+
+    engine = BoxEngine()
+
+    if args.review:
+        # Interactive review mode
+        def review_hook(event, hook_args):
+            if engine.check_permission(event, hook_args):
+                return
+            print(f"[AUDIT] {_format_event(event, hook_args)}", file=sys.stderr)
+            try:
+                response = input("Allow? [y/N]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\nAborted.", file=sys.stderr)
+                sys.exit(130)
+            if response != "y":
+                print("Denied. Terminating.", file=sys.stderr)
+                sys.exit(1)
+
+        install_hook(review_hook, blocklist={"builtins.input", "builtins.input/result"})
+    else:
+        # Enforcement mode
+        def enforce_hook(event, hook_args):
+            if not engine.check_permission(event, hook_args):
+                print(f"[malwi-box] BLOCKED: {_format_event(event, hook_args)}", file=sys.stderr)
+                sys.exit(78)
+
+        install_hook(enforce_hook)
+
+    # Run pip
+    from pip._internal.cli.main import main as pip_main
+    return pip_main(pip_args)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Python audit hook sandbox",
-        usage="%(prog)s {run,review} <command> [args...]",
+        usage="%(prog)s {run,install} ...",
     )
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
     # run subcommand
     run_parser = subparsers.add_parser(
         "run",
-        help="Run command with config-based enforcement",
-        usage="%(prog)s <script.py|module> [args...]",
+        help="Run a Python script or module with sandboxing",
+        usage="%(prog)s <script.py|module> [args...] [--review]",
     )
     run_parser.add_argument(
         "command",
         nargs=argparse.REMAINDER,
-        help="Python script or module to run (e.g., script.py or pip install)",
+        help="Python script or module to run",
+    )
+    run_parser.add_argument(
+        "--review",
+        action="store_true",
+        help="Enable interactive approval mode",
     )
 
-    # review subcommand
-    review_parser = subparsers.add_parser(
-        "review",
-        help="Run command with interactive approval",
-        usage="%(prog)s <script.py|module> [args...]",
+    # install subcommand
+    install_parser = subparsers.add_parser(
+        "install",
+        help="Install Python packages with sandboxing",
+        usage="%(prog)s <package> [--version VERSION] | -r <requirements.txt> [--review]",
     )
-    review_parser.add_argument(
-        "command",
-        nargs=argparse.REMAINDER,
-        help="Python script or module to run (e.g., script.py or pip install)",
+    install_parser.add_argument(
+        "package",
+        nargs="?",
+        help="Package name to install",
+    )
+    install_parser.add_argument(
+        "--version",
+        dest="pkg_version",
+        help="Package version to install",
+    )
+    install_parser.add_argument(
+        "-r", "--requirements",
+        dest="requirements",
+        help="Install from requirements file",
+    )
+    install_parser.add_argument(
+        "--review",
+        action="store_true",
+        help="Enable interactive approval mode",
     )
 
     args = parser.parse_args()
 
     if args.subcommand == "run":
         return run_command(args)
-    elif args.subcommand == "review":
-        return review_command(args)
+    elif args.subcommand == "install":
+        return install_command(args)
 
     return 1
 
