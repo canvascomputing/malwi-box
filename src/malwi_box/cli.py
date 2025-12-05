@@ -4,20 +4,31 @@ import subprocess
 import sys
 import tempfile
 
+# Template for run mode: Uses BoxEngine to enforce config-based permissions
 RUN_SITECUSTOMIZE_TEMPLATE = """\
 import sys
 
-def _malwi_box_hook(event, args):
-    print(f"[AUDIT] {event}: {args}", file=sys.stderr)
-
 try:
     from malwi_box import install_hook
+    from malwi_box.engine import BoxEngine
+
+    _engine = BoxEngine()
+
+    def _malwi_box_hook(event, args):
+        if not _engine.check_permission(event, args):
+            sys.stderr.write(f"[malwi-box] BLOCKED: {event}: {args}\\n")
+            sys.stderr.flush()
+            import os
+            os._exit(78)
+
     install_hook(_malwi_box_hook)
 except ImportError as e:
     print(f"[malwi-box] Warning: Could not import malwi_box: {e}", file=sys.stderr)
 """
 
+# Template for review mode: Interactive approval with decision recording
 REVIEW_SITECUSTOMIZE_TEMPLATE = """\
+import atexit
 import os
 import sys
 
@@ -27,21 +38,49 @@ _REVIEW_BLOCKLIST = {
     "builtins.input/result",
 }
 
-def _malwi_box_hook(event, args):
-    print(f"[AUDIT] {event}: {args}", file=sys.stderr)
-    try:
-        response = input("Allow? [y/N]: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        print("\\nAborted.", file=sys.stderr)
-        sys.stderr.flush()
-        os._exit(130)
-    if response != "y":
-        print("Denied. Terminating.", file=sys.stderr)
-        sys.stderr.flush()
-        os._exit(1)
-
 try:
     from malwi_box import install_hook
+    from malwi_box.engine import BoxEngine
+
+    _engine = BoxEngine()
+
+    def _malwi_box_hook(event, args):
+        # First check if already allowed by config
+        if _engine.check_permission(event, args):
+            return
+
+        # Not in config - ask user
+        print(f"[AUDIT] {event}: {args}", file=sys.stderr)
+        try:
+            response = input("Allow? [y/N/a(lways)]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\\nAborted.", file=sys.stderr)
+            sys.stderr.flush()
+            os._exit(130)
+
+        if response == "a":
+            # Always allow - record decision
+            details = {"event": event}
+            if event == "open" and args:
+                details["path"] = str(args[0])
+                details["mode"] = args[1] if len(args) > 1 else "r"
+            elif event in ("subprocess.Popen", "os.system") and args:
+                if event == "os.system":
+                    details["command"] = str(args[0])
+                else:
+                    details["command"] = " ".join([str(args[0])] + [str(a) for a in (args[1] if len(args) > 1 else [])])
+            elif event in ("os.putenv", "os.unsetenv") and args:
+                details["key"] = str(args[0])
+            _engine.record_decision(event, args, allowed=True, details=details)
+        elif response != "y":
+            print("Denied. Terminating.", file=sys.stderr)
+            sys.stderr.flush()
+            os._exit(1)
+
+    def _save_on_exit():
+        _engine.save_decisions()
+
+    atexit.register(_save_on_exit)
     install_hook(_malwi_box_hook, blocklist=_REVIEW_BLOCKLIST)
 except ImportError as e:
     print(f"[malwi-box] Warning: Could not import malwi_box: {e}", file=sys.stderr)

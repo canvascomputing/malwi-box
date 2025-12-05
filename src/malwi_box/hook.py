@@ -1,6 +1,10 @@
 from collections.abc import Callable, Iterable
 
-from malwi_box._audit_hook import clear_callback, set_blocklist, set_callback
+from malwi_box._audit_hook import (
+    clear_callback,
+    set_blocklist,
+    set_callback,
+)
 
 
 def install_hook(
@@ -40,3 +44,5 @@ def set_event_blocklist(blocklist: Iterable[str] | None) -> None:
         set_blocklist(None)
     else:
         set_blocklist(list(blocklist))
+
+

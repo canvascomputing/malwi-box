@@ -8,6 +8,7 @@ typedef struct {
     PyObject *callback;  // User-provided Python callable
     PyObject *blocklist; // Set of event names to block
     int hook_registered; // Whether the audit hook has been registered
+    int profile_registered; // Whether the profile hook has been registered
 } AuditHookState;
 
 // Get module state
@@ -17,6 +18,11 @@ static AuditHookState* get_state(PyObject *module) {
 
 // Global pointer to module for use in audit hook callback
 static PyObject *g_module = NULL;
+
+// Cached references for env var monitoring
+static PyObject *g_os_module = NULL;
+static PyObject *g_os_getenv = NULL;
+static PyObject *g_os_environ = NULL;
 
 // Check if a string matches (for quick C-level checks)
 static inline int streq(const char *a, const char *b) {
@@ -114,6 +120,130 @@ static int audit_hook(const char *event, PyObject *args, void *userData) {
     return 0;
 }
 
+// Helper to invoke the audit callback with a custom event
+static void invoke_audit_callback(const char *event, PyObject *args_tuple) {
+    if (g_module == NULL) {
+        return;
+    }
+
+    AuditHookState *state = get_state(g_module);
+    if (state == NULL || state->callback == NULL) {
+        return;
+    }
+
+    PyObject *event_str = PyUnicode_FromString(event);
+    if (event_str == NULL) {
+        return;
+    }
+
+    // Check if event is in blocklist
+    if (state->blocklist != NULL) {
+        int contains = PySet_Contains(state->blocklist, event_str);
+        if (contains == 1) {
+            Py_DECREF(event_str);
+            return;
+        }
+    }
+
+    PyObject *result = PyObject_CallFunctionObjArgs(
+        state->callback, event_str, args_tuple, NULL
+    );
+
+    Py_DECREF(event_str);
+
+    if (result == NULL) {
+        if (PyErr_ExceptionMatches(PyExc_SystemExit)) {
+            PyObject *exc_type, *exc_value, *exc_tb;
+            PyErr_Fetch(&exc_type, &exc_value, &exc_tb);
+            int exit_code = 78;
+            if (exc_value != NULL) {
+                PyObject *code = PyObject_GetAttrString(exc_value, "code");
+                if (code != NULL && PyLong_Check(code)) {
+                    exit_code = (int)PyLong_AsLong(code);
+                }
+                Py_XDECREF(code);
+            }
+            Py_XDECREF(exc_type);
+            Py_XDECREF(exc_value);
+            Py_XDECREF(exc_tb);
+            _exit(exit_code);
+        }
+        if (PyErr_ExceptionMatches(PyExc_KeyboardInterrupt)) {
+            PyErr_Clear();
+            _exit(130);
+        }
+        PyErr_Print();
+        PyErr_Clear();
+    } else {
+        Py_DECREF(result);
+    }
+}
+
+// Profile hook function for monitoring env var access
+static int profile_hook(PyObject *obj, PyFrameObject *frame, int what, PyObject *arg) {
+    // Only interested in C function calls
+    if (what != PyTrace_C_CALL) {
+        return 0;
+    }
+
+    // Skip if finalizing
+    if (_Py_IsFinalizing()) {
+        return 0;
+    }
+
+    if (g_module == NULL) {
+        return 0;
+    }
+
+    AuditHookState *state = get_state(g_module);
+    if (state == NULL || !state->profile_registered) {
+        return 0;
+    }
+
+    // arg is the function being called
+    if (arg == NULL || !PyCFunction_Check(arg)) {
+        return 0;
+    }
+
+    // Get function name
+    const char *func_name = ((PyCFunctionObject *)arg)->m_ml->ml_name;
+    if (func_name == NULL) {
+        return 0;
+    }
+
+    // Check if this is os.getenv or os.environ.get
+    int is_getenv = streq(func_name, "getenv");
+    int is_environ_get = streq(func_name, "get");
+
+    if (!is_getenv && !is_environ_get) {
+        return 0;
+    }
+
+    // For os.environ.get, verify it's from os.environ
+    if (is_environ_get) {
+        PyObject *self_obj = ((PyCFunctionObject *)arg)->m_self;
+        if (self_obj == NULL || self_obj != g_os_environ) {
+            return 0;
+        }
+    }
+
+    // Create a custom audit event "os.getenv" or "os.environ.get"
+    // We pass the function object as args so the callback can inspect it
+    const char *event_name = is_getenv ? "os.getenv" : "os.environ.get";
+
+    PyObject *args_tuple = PyTuple_New(1);
+    if (args_tuple == NULL) {
+        return 0;
+    }
+    Py_INCREF(arg);
+    PyTuple_SET_ITEM(args_tuple, 0, arg);
+
+    invoke_audit_callback(event_name, args_tuple);
+
+    Py_DECREF(args_tuple);
+    return 0;
+}
+
 // Python-callable function to set the callback
 static PyObject* set_callback(PyObject *self, PyObject *args) {
     PyObject *callback;
@@ -144,6 +274,20 @@ static PyObject* set_callback(PyObject *self, PyObject *args) {
         g_module = self;
         Py_INCREF(g_module);
 
+        // Register the profile hook for env var monitoring BEFORE the audit hook
+        // (because audit hook blocks sys.setprofile events)
+        // Cache os module references first
+        if (g_os_module == NULL) {
+            g_os_module = PyImport_ImportModule("os");
+            if (g_os_module != NULL) {
+                g_os_getenv = PyObject_GetAttrString(g_os_module, "getenv");
+                g_os_environ = PyObject_GetAttrString(g_os_module, "environ");
+            }
+        }
+        PyEval_SetProfile(profile_hook, NULL);
+        state->profile_registered = 1;
+
+        // Now register the audit hook
         if (PySys_AddAuditHook(audit_hook, NULL) < 0) {
             PyErr_SetString(PyExc_RuntimeError, "failed to add audit hook");
             return NULL;
@@ -248,6 +392,11 @@ static int module_clear(PyObject *module) {
         Py_CLEAR(g_module);
     }
 
+    // Clear cached os module references
+    Py_CLEAR(g_os_module);
+    Py_CLEAR(g_os_getenv);
+    Py_CLEAR(g_os_environ);
+
     AuditHookState *state = get_state(module);
     if (state != NULL) {
         Py_CLEAR(state->callback);
@@ -290,6 +439,7 @@ PyMODINIT_FUNC PyInit__audit_hook(void) {
     state->callback = NULL;
     state->blocklist = NULL;
     state->hook_registered = 0;
+    state->profile_registered = 0;
 
     return module;
 }
