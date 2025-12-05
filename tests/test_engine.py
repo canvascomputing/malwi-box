@@ -19,13 +19,15 @@ class TestConfigLoading:
         engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
 
         assert engine.config["allow_pypi_requests"] is True
-        assert str(tmp_path) in engine.config["allow_dir_reads"]
-        assert str(tmp_path) in engine.config["allow_dir_writes"]
+        assert str(tmp_path) in engine.config["allow_read"]
+        assert str(tmp_path) in engine.config["allow_create"]
+        assert str(tmp_path) in engine.config["allow_modify"]
+        assert engine.config["allow_delete"] == []  # Conservative default
 
     def test_load_config_from_file(self, tmp_path):
         """Test loading config from JSON file."""
         config = {
-            "allow_file_reads": ["/etc/hosts"],
+            "allow_read": ["/etc/hosts"],
             "allow_pypi_requests": False,
             "allow_system_commands": ["ls *"],
         }
@@ -34,7 +36,7 @@ class TestConfigLoading:
 
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
-        assert "/etc/hosts" in engine.config["allow_file_reads"]
+        assert "/etc/hosts" in engine.config["allow_read"]
         assert engine.config["allow_pypi_requests"] is False
         assert "ls *" in engine.config["allow_system_commands"]
 
@@ -47,7 +49,7 @@ class TestConfigLoading:
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
         # Should have default for missing keys
-        assert "allow_file_reads" in engine.config
+        assert "allow_read" in engine.config
         assert "allow_system_commands" in engine.config
 
 
@@ -63,19 +65,27 @@ class TestFilePermissions:
         # Simulate 'open' event for reading
         assert engine.check_permission("open", (str(test_file), "r", 0))
 
-    def test_allow_write_in_workdir(self, tmp_path):
-        """Test that writes in workdir are allowed by default."""
+    def test_allow_create_in_workdir(self, tmp_path):
+        """Test that creating files in workdir is allowed by default."""
         engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
         test_file = tmp_path / "new_file.txt"
 
-        # Simulate 'open' event for writing (new file)
+        # Simulate 'open' event for creating new file
+        assert engine.check_permission("open", (str(test_file), "w", 0))
+
+    def test_allow_modify_in_workdir(self, tmp_path):
+        """Test that modifying files in workdir is allowed by default."""
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+        test_file = tmp_path / "existing.txt"
+        test_file.write_text("existing content")
+
+        # Simulate 'open' event for modifying existing file
         assert engine.check_permission("open", (str(test_file), "w", 0))
 
     def test_block_read_outside_allowed(self, tmp_path):
         """Test that reads outside allowed paths are blocked."""
         config = {
-            "allow_file_reads": [],
-            "allow_dir_reads": [str(tmp_path / "allowed")],
+            "allow_read": [str(tmp_path / "allowed")],
         }
         config_path = tmp_path / ".malwi-box"
         config_path.write_text(json.dumps(config))
@@ -87,13 +97,43 @@ class TestFilePermissions:
 
     def test_allow_specific_file(self, tmp_path):
         """Test allowing a specific file path."""
-        config = {"allow_file_reads": ["/etc/hosts"]}
+        config = {"allow_read": ["/etc/hosts"]}
         config_path = tmp_path / ".malwi-box"
         config_path.write_text(json.dumps(config))
 
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
         assert engine.check_permission("open", ("/etc/hosts", "r", 0))
+
+    def test_block_create_outside_allowed(self, tmp_path):
+        """Test that creating files outside allowed paths is blocked."""
+        config = {
+            "allow_create": [str(tmp_path / "allowed")],
+        }
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # New file outside allowed directory
+        assert not engine.check_permission("open", ("/tmp/newfile.txt", "w", 0))
+
+    def test_block_modify_outside_allowed(self, tmp_path):
+        """Test that modifying files outside allowed paths is blocked."""
+        config = {
+            "allow_modify": [str(tmp_path / "allowed")],
+        }
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Create a file to test modify permission
+        test_file = tmp_path / "outside.txt"
+        test_file.write_text("content")
+
+        # Existing file outside allowed directory
+        assert not engine.check_permission("open", (str(test_file), "w", 0))
 
 
 class TestHashVerification:
@@ -278,22 +318,77 @@ class TestEnvVarPermissions:
 
         assert not engine.check_permission("os.putenv", ("SECRET_KEY", "value"))
 
+    def test_allow_env_unset(self, tmp_path):
+        """Test that os.unsetenv uses same permissions as putenv."""
+        config = {"allow_env_var_writes": ["TEMP_VAR"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        assert engine.check_permission("os.unsetenv", ("TEMP_VAR",))
+        assert not engine.check_permission("os.unsetenv", ("SECRET_KEY",))
+
 
 class TestDecisionRecording:
     """Tests for review mode decision recording."""
 
-    def test_record_and_save_decisions(self, tmp_path):
-        """Test that decisions are recorded and saved correctly."""
+    def test_record_and_save_read_decision(self, tmp_path):
+        """Test that read decisions are saved correctly."""
         config_path = tmp_path / ".malwi-box"
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
-        # Record some decisions
         engine.record_decision(
             "open",
             ("/tmp/test.txt", "r"),
             allowed=True,
-            details={"path": "/tmp/test.txt", "mode": "r"},
+            details={"path": "/tmp/test.txt", "mode": "r", "is_new_file": False},
         )
+
+        engine.save_decisions()
+
+        saved_config = json.loads(config_path.read_text())
+        assert "/tmp/test.txt" in saved_config.get("allow_read", [])
+
+    def test_record_and_save_create_decision(self, tmp_path):
+        """Test that create decisions are saved correctly."""
+        config_path = tmp_path / ".malwi-box"
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        engine.record_decision(
+            "open",
+            ("/tmp/newfile.txt", "w"),
+            allowed=True,
+            details={"path": "/tmp/newfile.txt", "mode": "w", "is_new_file": True},
+        )
+
+        engine.save_decisions()
+
+        saved_config = json.loads(config_path.read_text())
+        assert "/tmp/newfile.txt" in saved_config.get("allow_create", [])
+
+    def test_record_and_save_modify_decision(self, tmp_path):
+        """Test that modify decisions are saved correctly."""
+        config_path = tmp_path / ".malwi-box"
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        engine.record_decision(
+            "open",
+            ("/tmp/existing.txt", "w"),
+            allowed=True,
+            details={"path": "/tmp/existing.txt", "mode": "w", "is_new_file": False},
+        )
+
+        engine.save_decisions()
+
+        saved_config = json.loads(config_path.read_text())
+        assert "/tmp/existing.txt" in saved_config.get("allow_modify", [])
+
+    def test_record_and_save_command_decision(self, tmp_path):
+        """Test that command decisions are saved correctly."""
+        config_path = tmp_path / ".malwi-box"
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
         engine.record_decision(
             "subprocess.Popen",
             ("git", ["status"]),
@@ -301,13 +396,9 @@ class TestDecisionRecording:
             details={"command": "git status"},
         )
 
-        # Save decisions
         engine.save_decisions()
 
-        # Verify config was written
-        assert config_path.exists()
         saved_config = json.loads(config_path.read_text())
-        assert "/tmp/test.txt" in saved_config.get("allow_file_reads", [])
         assert "git status" in saved_config.get("allow_system_commands", [])
 
     def test_record_and_save_domain_with_port(self, tmp_path):
@@ -345,6 +436,23 @@ class TestDecisionRecording:
 
         saved_config = json.loads(config_path.read_text())
         assert "example.com" in saved_config.get("allow_domains", [])
+
+    def test_record_and_save_env_var_decision(self, tmp_path):
+        """Test that env var write decisions are saved correctly."""
+        config_path = tmp_path / ".malwi-box"
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        engine.record_decision(
+            "os.putenv",
+            ("MY_VAR", "value"),
+            allowed=True,
+            details={"key": "MY_VAR"},
+        )
+
+        engine.save_decisions()
+
+        saved_config = json.loads(config_path.read_text())
+        assert "MY_VAR" in saved_config.get("allow_env_var_writes", [])
 
 
 class TestUnhandledEvents:

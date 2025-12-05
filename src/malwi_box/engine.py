@@ -65,12 +65,10 @@ class BoxEngine:
         read_paths = [workdir_str] + stdlib_paths
 
         return {
-            "allow_file_reads": [],
-            "allow_file_writes": [],
-            "allow_file_changes": [],
-            "allow_dir_reads": read_paths,
-            "allow_dir_writes": [workdir_str],
-            "allow_dir_changes": [workdir_str],
+            "allow_read": read_paths,
+            "allow_create": [workdir_str],
+            "allow_modify": [workdir_str],
+            "allow_delete": [],  # Conservative default - no delete allowed
             "allow_env_var_reads": [],
             "allow_env_var_writes": [],
             "allow_pypi_requests": True,
@@ -171,42 +169,38 @@ class BoxEngine:
                 continue
         return False
 
-    def _check_read_permission(self, path: Path) -> bool:
-        """Check if reading a file is permitted."""
-        # Check specific file permissions
-        if self._check_path_in_list(path, self.config.get("allow_file_reads", [])):
-            return True
-        # Check directory permissions
-        if self._check_path_in_dir_list(path, self.config.get("allow_dir_reads", [])):
-            return True
-        return False
-
-    def _check_write_permission(self, path: Path, is_new_file: bool) -> bool:
-        """Check if writing to a file is permitted.
+    def _check_path_permission(self, path: Path, allow_list: list, check_hash: bool = False) -> bool:
+        """Check if a path is permitted by an allow list.
 
         Args:
-            path: Resolved absolute path.
-            is_new_file: True if file doesn't exist (creation).
+            path: Resolved absolute path to check.
+            allow_list: List of allowed paths (files or directories).
+            check_hash: If True, verify hash for entries that have one.
+
+        Returns:
+            True if path is allowed.
         """
-        if is_new_file:
-            # Creating new file - check writes
-            if self._check_path_in_list(path, self.config.get("allow_file_writes", [])):
-                return True
-            if self._check_path_in_dir_list(
-                path, self.config.get("allow_dir_writes", [])
-            ):
-                return True
-        else:
-            # Modifying existing file - check changes (with hash verification)
-            if self._check_path_in_list(
-                path, self.config.get("allow_file_changes", []), check_hash=True
-            ):
-                return True
-            if self._check_path_in_dir_list(
-                path, self.config.get("allow_dir_changes", [])
-            ):
-                return True
+        # Check exact file match
+        if self._check_path_in_list(path, allow_list, check_hash=check_hash):
+            return True
+        # Check if path is within an allowed directory
+        if self._check_path_in_dir_list(path, allow_list):
+            return True
         return False
+
+    def _check_read_permission(self, path: Path) -> bool:
+        """Check if reading a file is permitted."""
+        return self._check_path_permission(path, self.config.get("allow_read", []))
+
+    def _check_create_permission(self, path: Path) -> bool:
+        """Check if creating a new file is permitted."""
+        return self._check_path_permission(path, self.config.get("allow_create", []))
+
+    def _check_modify_permission(self, path: Path) -> bool:
+        """Check if modifying an existing file is permitted."""
+        return self._check_path_permission(
+            path, self.config.get("allow_modify", []), check_hash=True
+        )
 
     def _check_file_access(self, args: tuple) -> bool:
         """Check file access permission for 'open' event."""
@@ -225,14 +219,17 @@ class BoxEngine:
 
         resolved = self._resolve_path(path_arg)
 
-        # Determine if this is a write operation
+        # Determine operation type from mode
         # w=write, a=append, x=exclusive create, +=read/write
         # Note: 'b' is binary mode (not write), 'r' is read
         is_write = any(c in str(mode) for c in "wax+")
 
         if is_write:
             is_new_file = not resolved.exists()
-            return self._check_write_permission(resolved, is_new_file)
+            if is_new_file:
+                return self._check_create_permission(resolved)
+            else:
+                return self._check_modify_permission(resolved)
         else:
             return self._check_read_permission(resolved)
 
@@ -405,14 +402,21 @@ class BoxEngine:
 
             if event == "open":
                 path = details.get("path")
+                if not path:
+                    continue
                 mode = details.get("mode", "r")
-                if path:
-                    if any(c in mode for c in "wax"):
-                        if path not in config.get("allow_file_writes", []):
-                            config.setdefault("allow_file_writes", []).append(path)
-                    else:
-                        if path not in config.get("allow_file_reads", []):
-                            config.setdefault("allow_file_reads", []).append(path)
+                is_new = details.get("is_new_file", False)
+                is_write = any(c in mode for c in "wax+")
+
+                if is_write and is_new:
+                    key = "allow_create"
+                elif is_write:
+                    key = "allow_modify"
+                else:
+                    key = "allow_read"
+
+                if path not in config.get(key, []):
+                    config.setdefault(key, []).append(path)
 
             elif event in ("subprocess.Popen", "os.system"):
                 cmd = details.get("command")

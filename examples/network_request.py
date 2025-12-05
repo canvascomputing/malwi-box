@@ -1,21 +1,22 @@
-"""Example script that makes a network request.
+"""Example: Making network requests to external domains.
 
-This can be used to test the review command's ability to block network access.
+Tests the `allow_domains` config option.
 
 Usage:
-    # Run with review mode to interactively approve/deny the request
-    uv run malwi-box review examples/network_request.py
-
-    # Run normally - will be blocked because httpbin.org is not PyPI
-    # and no other hosts are allowed by default
+    # Will be blocked - httpbin.org is not in allow_domains
     uv run malwi-box run examples/network_request.py
 
-Expected behavior:
-    - In review mode: You'll be prompted to allow the socket.connect event
-    - In run mode: The request will be blocked with exit code 78
+    # Use review mode to allow interactively
+    uv run malwi-box review examples/network_request.py
 
-The default config only allows connections to PyPI hosts (pypi.org,
-files.pythonhosted.org). All other network requests are blocked.
+Config to allow:
+    "allow_domains": ["httpbin.org"]
+
+    Or with specific port:
+    "allow_domains": ["httpbin.org:443"]
+
+Note: PyPI domains (pypi.org, files.pythonhosted.org) are allowed
+by default when allow_pypi_requests is true.
 """
 
 import urllib.request

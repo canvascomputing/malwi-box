@@ -63,8 +63,12 @@ try:
             # Always allow - record decision
             details = {"event": event}
             if event == "open" and args:
+                import os as _os
+                from pathlib import Path as _Path
                 details["path"] = str(args[0])
                 details["mode"] = args[1] if len(args) > 1 else "r"
+                # Track if this is a new file (for create vs modify)
+                details["is_new_file"] = not _Path(args[0]).exists()
             elif event in ("subprocess.Popen", "os.system") and args:
                 if event == "os.system":
                     details["command"] = str(args[0])
