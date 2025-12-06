@@ -15,8 +15,8 @@ Config to allow:
     Or with specific port:
     "allow_domains": ["httpbin.org:443"]
 
-Note: PyPI domains (pypi.org, files.pythonhosted.org) are allowed
-by default when allow_pypi_requests is true.
+Note: PyPI domains (pypi.org, files.pythonhosted.org) are included
+in allow_domains by default.
 """
 
 import urllib.request

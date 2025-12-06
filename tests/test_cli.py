@@ -166,7 +166,7 @@ print("done")
 """)
         # Create empty config to ensure /etc/passwd is not allowed
         config = tmp_path / ".malwi-box"
-        config.write_text('{"allow_read": [], "allow_pypi_requests": false}')
+        config.write_text('{"allow_read": [], "allow_domains": []}')
 
         # Run with review mode, deny the request
         result = subprocess.run(

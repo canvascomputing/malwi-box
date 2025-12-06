@@ -7,6 +7,10 @@ It can also be imported directly for testing.
 import os
 import sys
 
+# ANSI color codes
+RED = "\033[91m"
+RESET = "\033[0m"
+
 
 def setup_hook(engine=None):
     """Set up the enforcement hook.
@@ -29,7 +33,8 @@ def setup_hook(engine=None):
         in_hook = True
         try:
             if not engine.check_permission(event, args):
-                sys.stderr.write(f"[malwi-box] BLOCKED: {format_event(event, args)}\n")
+                msg = f"{RED}[malwi-box] Blocked: {format_event(event, args)}{RESET}\n"
+                sys.stderr.write(msg)
                 sys.stderr.flush()
                 os._exit(78)
         finally:

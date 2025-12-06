@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import ipaddress
 import json
 import os
 import sys
@@ -11,14 +12,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-# PyPI-related hosts that are allowed when allow_pypi_requests is True
-PYPI_HOSTS = frozenset({
+# PyPI-related domains for default allow_domains
+PYPI_DOMAINS = [
     "pypi.org",
-    "www.pypi.org",
     "files.pythonhosted.org",
-    "upload.pypi.org",
-    "test.pypi.org",
-})
+]
 
 # Events that can execute native binaries or load shared libraries
 EXEC_EVENTS = frozenset({
@@ -52,6 +50,8 @@ class BoxEngine:
         self.workdir = Path(workdir) if workdir else Path.cwd()
         self.config = self._load_config()
         self._decisions: list[dict[str, Any]] = []
+        self._resolved_ips: set[str] = set()  # IPs resolved from allowed domains
+        self._in_resolution = False  # Guard against recursive DNS resolution
 
     def _default_config(self) -> dict[str, Any]:
         """Return default configuration with workdir permissions."""
@@ -67,10 +67,10 @@ class BoxEngine:
             "allow_delete": [],  # Conservative default - no delete allowed
             "allow_env_var_reads": [],
             "allow_env_var_writes": [],
-            "allow_pypi_requests": True,
-            "allow_domains": [],
+            "allow_domains": PYPI_DOMAINS.copy(),
             "allow_executables": [],  # Block all by default, use ["*"] to allow all
             "allow_shell_commands": [],  # Block all by default, use ["*"] to allow all
+            "allow_ips": [],  # CIDR notation supported, e.g. ["10.0.0.0/8", "192.168.1.100"]
         }
 
     def _load_config(self) -> dict[str, Any]:
@@ -453,10 +453,6 @@ class BoxEngine:
         if not host or not isinstance(host, str):
             return True
 
-        # Allow PyPI domains (any port)
-        if self.config.get("allow_pypi_requests", False) and host in PYPI_HOSTS:
-            return True
-
         # Check allowed domains
         for entry in self.config.get("allow_domains", []):
             allowed_domain, allowed_port = self._parse_domain_entry(entry)
@@ -465,12 +461,121 @@ class BoxEngine:
                 # If entry specifies a port, check it matches
                 if allowed_port is not None:
                     if port is None or port == allowed_port:
+                        self._cache_resolved_ips(host, port)
                         return True
                 else:
                     # No port specified - any port allowed
+                    self._cache_resolved_ips(host, port)
                     return True
 
         return False
+
+    def _cache_resolved_ips(self, domain: str, port: int | None) -> None:
+        """Resolve and cache IPs for an allowed domain.
+
+        Uses a recursion guard since DNS resolution triggers audit events.
+        """
+        if self._in_resolution:
+            return
+
+        self._in_resolution = True
+        try:
+            import socket
+
+            results = socket.getaddrinfo(
+                domain, port or 443, proto=socket.IPPROTO_TCP
+            )
+            for family, type_, proto, canonname, sockaddr in results:
+                self._resolved_ips.add(sockaddr[0])
+        except socket.gaierror:
+            pass  # DNS resolution failed, nothing to cache
+        finally:
+            self._in_resolution = False
+
+    def _is_ip_address(self, host: str) -> bool:
+        """Check if host is an IP address (v4 or v6)."""
+        try:
+            ipaddress.ip_address(host)
+            return True
+        except ValueError:
+            return False
+
+    def _parse_ip_entry(self, entry: str) -> tuple[str, int | None]:
+        """Parse IP entry which may include port (e.g., '10.0.0.1:80').
+
+        For IPv6 with port, use bracket notation: [::1]:80
+        """
+        # Handle bracketed IPv6 with port: [::1]:80
+        if entry.startswith("["):
+            bracket_end = entry.find("]")
+            if bracket_end != -1:
+                ip_part = entry[1:bracket_end]
+                if len(entry) > bracket_end + 1 and entry[bracket_end + 1] == ":":
+                    port_str = entry[bracket_end + 2 :]
+                    if port_str.isdigit():
+                        return ip_part, int(port_str)
+                return ip_part, None
+
+        # For non-bracketed, check if it's IPv4:port or just IPv6
+        if ":" in entry:
+            parts = entry.rsplit(":", 1)
+            # If last part is all digits, it's a port
+            if parts[1].isdigit():
+                # Verify first part is valid IPv4 (not IPv6)
+                try:
+                    ipaddress.IPv4Address(parts[0])
+                    return parts[0], int(parts[1])
+                except ValueError:
+                    pass
+            # Otherwise it's an IPv6 address without port
+        return entry, None
+
+    def _check_ip_permission(self, ip: str, port: int | None) -> bool:
+        """Check if connecting to an IP is permitted."""
+        # Check if IP was resolved from an allowed domain
+        if ip in self._resolved_ips:
+            return True
+
+        try:
+            ip_obj = ipaddress.ip_address(ip)
+        except ValueError:
+            return False
+
+        # Check static allow_ips config
+        for entry in self.config.get("allow_ips", []):
+            allowed_ip, allowed_port = self._parse_ip_entry(entry)
+            if allowed_port is not None and port != allowed_port:
+                continue
+            try:
+                network = ipaddress.ip_network(allowed_ip, strict=False)
+                if ip_obj in network:
+                    return True
+            except ValueError:
+                continue
+        return False
+
+    def _check_socket_connect(self, args: tuple) -> bool:
+        """Check if socket connection is permitted."""
+        if len(args) < 2:
+            return True
+
+        address = args[1]
+        if not isinstance(address, tuple) or len(address) < 1:
+            return True
+
+        host = address[0]
+        port = address[1] if len(address) > 1 else None
+
+        # Allow localhost/loopback
+        if host in ("localhost", "127.0.0.1", "::1"):
+            return True
+
+        # Check if it's an IP address
+        if self._is_ip_address(host):
+            return self._check_ip_permission(host, port)
+
+        # It's a hostname - check against allow_domains
+        return self._check_domain((host, port), "socket.connect")
 
     def check_permission(self, event: str, args: tuple) -> bool:
         """Check if an audit event is permitted.
@@ -500,7 +605,14 @@ class BoxEngine:
         elif event == "os.system":
             # os.system only checks shell commands (no binary path to verify)
             return self._check_shell_command(event, args)
-        elif event in ("socket.getaddrinfo", "socket.gethostbyname"):
+        elif event == "socket.connect":
+            return self._check_socket_connect(args)
+        elif event in (
+            "socket.getaddrinfo",
+            "socket.gethostbyname",
+            "socket.gethostbyname_ex",
+            "socket.gethostbyaddr",
+        ):
             return self._check_domain(args, event)
 
         # Events not explicitly handled are allowed
@@ -508,7 +620,9 @@ class BoxEngine:
 
     def _violation(self, reason: str) -> None:
         """Handle a permission violation by terminating immediately."""
-        sys.stderr.write(f"[malwi-box] VIOLATION: {reason} - Terminating\n")
+        red = "\033[91m"
+        reset = "\033[0m"
+        sys.stderr.write(f"{red}[malwi-box] Blocked: {reason}{reset}\n")
         sys.stderr.flush()
         os._exit(78)  # Exit code 78 for permission violation
 

@@ -12,7 +12,9 @@ class TestConfigLoading:
         """Test that default config is used when no file exists."""
         engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
 
-        assert engine.config["allow_pypi_requests"] is True
+        # Default config includes PyPI domains
+        assert "pypi.org" in engine.config["allow_domains"]
+        assert "files.pythonhosted.org" in engine.config["allow_domains"]
         # Default config uses variables like $PWD which get expanded at runtime
         assert "$PWD" in engine.config["allow_read"]
         assert "$PWD" in engine.config["allow_create"]
@@ -23,7 +25,7 @@ class TestConfigLoading:
         """Test loading config from JSON file."""
         config = {
             "allow_read": ["/etc/hosts"],
-            "allow_pypi_requests": False,
+            "allow_domains": [],
             "allow_shell_commands": ["ls *"],
         }
         config_path = tmp_path / ".malwi-box"
@@ -32,12 +34,12 @@ class TestConfigLoading:
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
         assert "/etc/hosts" in engine.config["allow_read"]
-        assert engine.config["allow_pypi_requests"] is False
+        assert engine.config["allow_domains"] == []
         assert "ls *" in engine.config["allow_shell_commands"]
 
     def test_merge_missing_keys_with_defaults(self, tmp_path):
         """Test that missing config keys are filled with defaults."""
-        config = {"allow_pypi_requests": False}
+        config = {"allow_domains": ["example.com"]}
         config_path = tmp_path / ".malwi-box"
         config_path.write_text(json.dumps(config))
 
@@ -443,13 +445,9 @@ class TestExecutableControl:
 class TestDomainPermissions:
     """Tests for domain permission checks via DNS resolution events."""
 
-    def test_allow_pypi_when_enabled(self, tmp_path):
-        """Test that PyPI domains are allowed when allow_pypi_requests is True."""
-        config = {"allow_pypi_requests": True}
-        config_path = tmp_path / ".malwi-box"
-        config_path.write_text(json.dumps(config))
-
-        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+    def test_allow_pypi_by_default(self, tmp_path):
+        """Test that PyPI domains are allowed by default."""
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
 
         # socket.getaddrinfo event with PyPI domain
         assert engine.check_permission("socket.getaddrinfo", ("pypi.org", 443, 0, 1, 0))
@@ -459,9 +457,9 @@ class TestDomainPermissions:
         # socket.gethostbyname event
         assert engine.check_permission("socket.gethostbyname", ("pypi.org",))
 
-    def test_block_pypi_when_disabled(self, tmp_path):
-        """Test that PyPI domains are blocked when allow_pypi_requests is False."""
-        config = {"allow_pypi_requests": False}
+    def test_block_pypi_when_removed_from_allow_domains(self, tmp_path):
+        """Test that PyPI domains are blocked when removed from allow_domains."""
+        config = {"allow_domains": []}
         config_path = tmp_path / ".malwi-box"
         config_path.write_text(json.dumps(config))
 
@@ -472,7 +470,7 @@ class TestDomainPermissions:
 
     def test_block_unknown_domains(self, tmp_path):
         """Test that unknown domains are blocked."""
-        config = {"allow_pypi_requests": True}
+        config = {"allow_domains": ["pypi.org"]}
         config_path = tmp_path / ".malwi-box"
         config_path.write_text(json.dumps(config))
 
@@ -854,3 +852,212 @@ class TestPathToVariable:
         saved_config = json.loads(config_path.read_text())
         # Should be saved as $PWD/test.txt, not the absolute path
         assert "$PWD/test.txt" in saved_config.get("allow_read", [])
+
+
+class TestSocketConnect:
+    """Tests for socket.connect event handling."""
+
+    def test_allow_localhost(self, tmp_path):
+        """Test that localhost connections are always allowed."""
+        config = {"allow_ips": [], "allow_domains": []}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # socket.connect event: (socket, address) where address is (host, port)
+        assert engine.check_permission("socket.connect", (None, ("localhost", 8080)))
+        assert engine.check_permission("socket.connect", (None, ("127.0.0.1", 8080)))
+        assert engine.check_permission("socket.connect", (None, ("::1", 8080)))
+
+    def test_block_direct_ip_without_allow_ips(self, tmp_path):
+        """Test that direct IP connections are blocked without allow_ips."""
+        config = {"allow_ips": [], "allow_domains": []}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Direct IP should be blocked
+        assert not engine.check_permission("socket.connect", (None, ("8.8.8.8", 53)))
+        assert not engine.check_permission("socket.connect", (None, ("192.168.1.1", 80)))
+
+    def test_allow_ip_in_allow_ips(self, tmp_path):
+        """Test that IPs in allow_ips are permitted."""
+        config = {"allow_ips": ["8.8.8.8", "192.168.1.0/24"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Exact IP match
+        assert engine.check_permission("socket.connect", (None, ("8.8.8.8", 53)))
+        # CIDR match
+        assert engine.check_permission("socket.connect", (None, ("192.168.1.100", 80)))
+        assert engine.check_permission("socket.connect", (None, ("192.168.1.1", 443)))
+        # Not in CIDR range
+        assert not engine.check_permission("socket.connect", (None, ("192.168.2.1", 80)))
+
+    def test_allow_ip_with_port(self, tmp_path):
+        """Test that IP:port in allow_ips only allows that port."""
+        config = {"allow_ips": ["10.0.0.1:443"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Correct port
+        assert engine.check_permission("socket.connect", (None, ("10.0.0.1", 443)))
+        # Wrong port
+        assert not engine.check_permission("socket.connect", (None, ("10.0.0.1", 80)))
+
+    def test_hostname_falls_back_to_allow_domains(self, tmp_path):
+        """Test that hostnames are checked against allow_domains."""
+        config = {"allow_domains": ["example.com"], "allow_ips": []}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Hostname should check allow_domains
+        assert engine.check_permission("socket.connect", (None, ("example.com", 443)))
+        assert engine.check_permission("socket.connect", (None, ("api.example.com", 80)))
+        assert not engine.check_permission("socket.connect", (None, ("evil.com", 80)))
+
+    def test_ipv6_address(self, tmp_path):
+        """Test IPv6 address handling."""
+        config = {"allow_ips": ["2001:db8::/32"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        assert engine.check_permission("socket.connect", (None, ("2001:db8::1", 80)))
+        assert not engine.check_permission("socket.connect", (None, ("2001:db9::1", 80)))
+
+    def test_ipv6_with_port(self, tmp_path):
+        """Test IPv6 with port using bracket notation."""
+        config = {"allow_ips": ["[2001:db8::1]:443"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        assert engine.check_permission("socket.connect", (None, ("2001:db8::1", 443)))
+        assert not engine.check_permission("socket.connect", (None, ("2001:db8::1", 80)))
+
+
+class TestAdditionalDNSEvents:
+    """Tests for additional DNS resolution events."""
+
+    def test_gethostbyname_ex(self, tmp_path):
+        """Test socket.gethostbyname_ex event."""
+        config = {"allow_domains": ["example.com"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        assert engine.check_permission("socket.gethostbyname_ex", ("example.com",))
+        assert not engine.check_permission("socket.gethostbyname_ex", ("evil.com",))
+
+    def test_gethostbyaddr(self, tmp_path):
+        """Test socket.gethostbyaddr event."""
+        config = {"allow_domains": ["example.com"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        assert engine.check_permission("socket.gethostbyaddr", ("example.com",))
+        assert not engine.check_permission("socket.gethostbyaddr", ("evil.com",))
+
+
+class TestIPParsing:
+    """Tests for IP address parsing helpers."""
+
+    def test_is_ip_address(self, tmp_path):
+        """Test _is_ip_address helper."""
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+
+        assert engine._is_ip_address("192.168.1.1")
+        assert engine._is_ip_address("8.8.8.8")
+        assert engine._is_ip_address("::1")
+        assert engine._is_ip_address("2001:db8::1")
+        assert not engine._is_ip_address("example.com")
+        assert not engine._is_ip_address("localhost")
+
+    def test_parse_ip_entry_ipv4(self, tmp_path):
+        """Test parsing IPv4 entries."""
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+
+        assert engine._parse_ip_entry("192.168.1.1") == ("192.168.1.1", None)
+        assert engine._parse_ip_entry("192.168.1.1:443") == ("192.168.1.1", 443)
+        assert engine._parse_ip_entry("10.0.0.0/8") == ("10.0.0.0/8", None)
+
+    def test_parse_ip_entry_ipv6(self, tmp_path):
+        """Test parsing IPv6 entries."""
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+
+        assert engine._parse_ip_entry("::1") == ("::1", None)
+        assert engine._parse_ip_entry("2001:db8::1") == ("2001:db8::1", None)
+        assert engine._parse_ip_entry("[::1]:443") == ("::1", 443)
+        assert engine._parse_ip_entry("[2001:db8::1]:80") == ("2001:db8::1", 80)
+
+
+class TestDomainIPResolution:
+    """Tests for domain → IP resolution caching."""
+
+    def test_allowed_domain_dns_caches_ips(self, tmp_path):
+        """Test that DNS lookup for allowed domain caches resolved IPs."""
+        config = {"allow_domains": ["example.com"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Simulate DNS lookup - this should cache the IPs
+        assert engine.check_permission("socket.getaddrinfo", ("example.com", 443, 0, 1, 0))
+
+        # Verify IPs were cached
+        assert len(engine._resolved_ips) > 0
+
+    def test_cached_ip_allowed_on_connect(self, tmp_path):
+        """Test that cached IPs are allowed for socket.connect."""
+        config = {"allow_domains": ["example.com"], "allow_ips": []}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # First do DNS lookup to cache IPs
+        engine.check_permission("socket.getaddrinfo", ("example.com", 443, 0, 1, 0))
+
+        # Get one of the cached IPs
+        cached_ip = next(iter(engine._resolved_ips))
+
+        # Now socket.connect to that IP should be allowed
+        assert engine.check_permission("socket.connect", (None, (cached_ip, 443)))
+
+    def test_uncached_ip_blocked_on_connect(self, tmp_path):
+        """Test that IPs not in cache are blocked."""
+        config = {"allow_domains": ["example.com"], "allow_ips": []}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Don't do DNS lookup - IP won't be cached
+        # Connect to arbitrary IP should be blocked
+        assert not engine.check_permission("socket.connect", (None, ("203.0.113.1", 443)))
+
+    def test_pypi_domains_cache_ips(self, tmp_path):
+        """Test that PyPI domains (in default allow_domains) cache their IPs."""
+        # Use default config which includes PyPI domains
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+
+        # DNS lookup for PyPI should cache IPs
+        assert engine.check_permission("socket.getaddrinfo", ("pypi.org", 443, 0, 1, 0))
+
+        # Verify IPs were cached
+        assert len(engine._resolved_ips) > 0

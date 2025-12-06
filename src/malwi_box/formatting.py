@@ -55,6 +55,19 @@ def format_event(event: str, args: tuple) -> str:
     if event == "socket.gethostbyname":
         return f"DNS lookup: {args[0]}"
 
+    if event in ("socket.gethostbyname_ex", "socket.gethostbyaddr"):
+        return f"DNS lookup: {args[0]}"
+
+    if event == "socket.connect":
+        # args: (socket, address) where address is (host, port)
+        if len(args) >= 2 and isinstance(args[1], tuple):
+            host = args[1][0]
+            port = args[1][1] if len(args[1]) > 1 else None
+            if port:
+                return f"Connect: {host}:{port}"
+            return f"Connect: {host}"
+        return f"Connect: {args}"
+
     if event == "subprocess.Popen":
         cmd_args = args[1] if len(args) > 1 else []
         cmd = _truncate(_build_command(args[0], cmd_args), MAX_CMD_LEN)
@@ -125,5 +138,15 @@ def extract_decision_details(event: str, args: tuple) -> dict:
 
     elif event == "socket.gethostbyname":
         details["domain"] = str(args[0])
+
+    elif event in ("socket.gethostbyname_ex", "socket.gethostbyaddr"):
+        details["domain"] = str(args[0])
+
+    elif event == "socket.connect":
+        # args: (socket, address) where address is (host, port)
+        if len(args) >= 2 and isinstance(args[1], tuple):
+            details["host"] = str(args[1][0])
+            if len(args[1]) > 1:
+                details["port"] = args[1][1]
 
     return details

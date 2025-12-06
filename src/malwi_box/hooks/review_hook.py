@@ -19,10 +19,21 @@ RESET = "\033[0m"
 # Events that replace the current process - atexit handlers won't run
 PROCESS_REPLACING_EVENTS = frozenset({"os.exec", "os.posix_spawn"})
 
+# DNS resolution events - need to cache IPs when approved
+DNS_EVENTS = frozenset({
+    "socket.getaddrinfo",
+    "socket.gethostbyname",
+    "socket.gethostbyname_ex",
+    "socket.gethostbyaddr",
+})
+
 # Event criticality classification
 CRITICAL_EVENTS = frozenset({
     "socket.getaddrinfo",
     "socket.gethostbyname",
+    "socket.gethostbyname_ex",
+    "socket.gethostbyaddr",
+    "socket.connect",
     "subprocess.Popen",
     "os.exec",
     "os.spawn",
@@ -107,6 +118,12 @@ def setup_hook(engine=None):
             session_allowed.add(key)
             details = extract_decision_details(event, args)
             engine.record_decision(event, args, allowed=True, details=details)
+
+            # For DNS events, cache resolved IPs so socket.connect works
+            if event in DNS_EVENTS and args:
+                host = args[0]
+                port = args[1] if len(args) > 1 else None
+                engine._cache_resolved_ips(host, port)
 
             # Process-replacing events need immediate save (atexit won't run)
             if event in PROCESS_REPLACING_EVENTS:
