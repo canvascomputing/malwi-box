@@ -1,143 +1,116 @@
 # malwi-box
 
-A Python sandbox tool for security inspection using audit hooks. Built with a C++ extension that leverages Python's [PEP 578](https://peps.python.org/pep-0578/) runtime audit hook API to intercept and monitor security-sensitive operations.
+Intercept, audit, and block critical Python operations at runtime.
 
-## Features
+## Use Cases
 
-- **Runtime audit monitoring** - Intercept all Python audit events (file access, code execution, imports, network operations, etc.)
-- **C++ performance** - Native extension for minimal overhead on audit hook callbacks
-- **Flexible callbacks** - Define custom Python callbacks to inspect, log, or block operations
-- **CLI launcher** - Run any Python script with audit hooks automatically injected
+- **Malware analysis** - Observe and restrict what suspicious Python code attempts to do
+- **Supply chain security** - Audit what packages access during installation
+- **Critical systems** - Enforce least-privilege access for Python scripts
 
-## Installation
+> **Note**: This is an observation/enforcement layer, not a full sandbox. Run in an isolated environment (VM/container) for analyzing truly malicious code.
 
-```bash
-uv sync
-```
-
-## Usage
-
-### CLI
-
-Run a Python script with audit logging enabled:
+## Quick Start
 
 ```bash
-malwi-box script.py [args...]
+# Create default config
+malwi-box config create
+
+# Run script with enforcement
+malwi-box run script.py
+
+# Interactive review mode - approve/deny each operation
+malwi-box run --review script.py
+
+# Sandboxed pip install
+malwi-box install requests
 ```
 
-All audit events are logged to stderr:
+## Configuration
 
-```
-[AUDIT] open: ('/path/to/file.py', 'r', 524288)
-[AUDIT] compile: (None, '/path/to/file.py')
-[AUDIT] exec: (<code object>,)
-```
+Config file: `.malwi-box` (JSON)
 
-### Python API
-
-Install custom hooks programmatically:
-
-```python
-from malwi_box import install_hook, uninstall_hook
-
-def my_hook(event: str, args: tuple):
-    print(f"[AUDIT] {event}: {args}")
-
-install_hook(my_hook)
-# ... your code ...
-uninstall_hook()
+```json
+{
+  "allow_read": ["$PWD", "$PYTHON_STDLIB", "$PYTHON_SITE_PACKAGES"],
+  "allow_create": ["$PWD"],
+  "allow_modify": [],
+  "allow_delete": [],
+  "allow_domains": ["pypi.org", "files.pythonhosted.org"],
+  "allow_ips": [],
+  "allow_executables": [],
+  "allow_shell_commands": []
+}
 ```
 
-## Defining Policies
+### Path Variables
+- `$PWD` - Working directory
+- `$HOME` - User home
+- `$TMPDIR` - Temp directory
+- `$PYTHON_STDLIB` - Python standard library
+- `$PYTHON_SITE_PACKAGES` - Installed packages
 
-Policies are Python functions that receive audit events and decide how to handle them. Here are common patterns:
+### Network
+- Domains in `allow_domains` automatically permit their resolved IPs
+- Direct IP access requires explicit `allow_ips` entries (CIDR supported)
 
-### Logging Policy
-
-Log all events for analysis:
-
-```python
-import sys
-
-def logging_policy(event: str, args: tuple):
-    print(f"[{event}] {args}", file=sys.stderr)
+### Executables
+Entries can include SHA256 hashes for verification:
+```json
+{
+  "allow_executables": [
+    {"path": "/usr/bin/git", "hash": "sha256:abc123..."}
+  ]
+}
 ```
 
-### Allowlist Policy
+## Examples
 
-Only permit specific operations:
-
-```python
-ALLOWED_EVENTS = {"import", "compile"}
-
-def allowlist_policy(event: str, args: tuple):
-    if event not in ALLOWED_EVENTS:
-        raise RuntimeError(f"Blocked event: {event}")
+### Analyze a suspicious package
+```bash
+# Create restrictive config
+malwi-box config create
+# Install with review - see exactly what it does
+malwi-box install --review sketchy-package
 ```
 
-### File Access Policy
-
-Restrict file system access to specific directories:
-
-```python
-from pathlib import Path
-
-ALLOWED_PATHS = [Path("/tmp"), Path.home() / "safe_dir"]
-
-def file_policy(event: str, args: tuple):
-    if event == "open":
-        path = Path(args[0]).resolve()
-        if not any(path.is_relative_to(allowed) for allowed in ALLOWED_PATHS):
-            raise PermissionError(f"Access denied: {path}")
+### Run untrusted script with network restrictions
+```bash
+# Only allow specific API
+cat > .malwi-box << 'EOF'
+{
+  "allow_read": ["$PWD", "$PYTHON_STDLIB", "$PYTHON_SITE_PACKAGES"],
+  "allow_domains": ["api.example.com"],
+  "allow_create": ["$PWD/output"]
+}
+EOF
+malwi-box run untrusted_script.py
 ```
 
-### Network Policy
-
-Block or monitor network operations:
-
-```python
-BLOCKED_HOSTS = {"malicious.com", "tracking.net"}
-
-def network_policy(event: str, args: tuple):
-    if event == "socket.connect":
-        address = args[1]
-        if isinstance(address, tuple) and address[0] in BLOCKED_HOSTS:
-            raise ConnectionError(f"Blocked connection to: {address[0]}")
+### Audit existing application
+```bash
+# Review mode shows all operations, you approve/deny each
+malwi-box run --review myapp.py
+# Approved operations are saved to .malwi-box for future runs
 ```
 
-### Combined Policy
+## How It Works
 
-Compose multiple policies:
+Uses Python's PEP 578 audit hooks via a C++ extension to intercept:
+- File operations (`open`)
+- Network requests (`socket.connect`, `socket.getaddrinfo`)
+- Process execution (`subprocess.Popen`, `os.exec*`, `os.system`)
+- Library loading (`ctypes.dlopen`)
 
-```python
-def combined_policy(event: str, args: tuple):
-    logging_policy(event, args)
-    file_policy(event, args)
-    network_policy(event, args)
+**Protections against bypass:**
+- Blocks `sys.addaudithook` to prevent registering competing hooks
+- Blocks `sys.settrace` and `sys.setprofile` to prevent debugger-based evasion
+- Blocks `ctypes.dlopen` by default to prevent loading native code that bypasses hooks
 
-install_hook(combined_policy)
-```
-
-## Common Audit Events
-
-| Event | Description | Args |
-|-------|-------------|------|
-| `open` | File open | `(path, mode, flags)` |
-| `exec` | Code execution | `(code_object,)` |
-| `import` | Module import | `(module, filename, sys.path, sys.meta_path, sys.path_hooks)` |
-| `compile` | Code compilation | `(source, filename)` |
-| `socket.connect` | Network connection | `(socket, address)` |
-| `subprocess.Popen` | Process spawn | `(executable, args, cwd, env)` |
-| `ctypes.dlopen` | Load shared library | `(name,)` |
-
-See the [full audit events table](https://docs.python.org/3/library/audit_events.html) for all available events.
+Blocked operations terminate immediately with exit code 78.
 
 ## Limitations
 
-- Audit hooks cannot be removed once registered (PEP 578 design). Use `uninstall_hook()` to disable the callback while keeping the hook registered.
-- Some C extension modules may not emit all expected audit events.
-- Requires Python 3.10+.
-
-## License
-
-MIT
+- Audit hooks cannot be bypassed from Python, but native code can
+- `ctypes.dlopen` is blocked by default to prevent native bypasses
+- Requires Python 3.10+
