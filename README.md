@@ -14,7 +14,7 @@
 - **Supply chain security** - Audit what packages access during installation
 - **Critical systems** - Enforce least-privilege access for Python scripts
 
-> **Note**: This is an observation/enforcement layer, not a full sandbox. Run in an isolated environment (VM/container) for analyzing truly malicious code.
+> **Warning**: This is tool is not a sandbox with isolated execution, it runs on your actual machine, kernel and CPU. Use at your own risk.
 
 ## Quick Start
 
@@ -164,12 +164,24 @@ allow_env_var_writes:
 |----------|-------------|
 | `$PWD` | Working directory |
 | `$HOME` | User home directory |
-| `$TMPDIR` | System temp directory |
+| `$TMPDIR` | System temp directory (macOS: `/var/folders/.../T`, Linux: `/tmp`) |
+| `$CACHE_HOME` | User cache directory (macOS: `~/Library/Caches`, Linux: `~/.cache`) |
+| `$PIP_CACHE` | pip cache directory |
+| `$VENV` | Active virtualenv root (if `$VIRTUAL_ENV` is set) |
 | `$PYTHON_STDLIB` | Python standard library |
-| `$PYTHON_SITE_PACKAGES` | Installed packages |
+| `$PYTHON_SITE_PACKAGES` | Installed packages (purelib) |
 | `$PYTHON_PLATLIB` | Platform-specific packages |
 | `$PYTHON_PREFIX` | Python installation prefix |
 | `$ENV{VAR}` | Any environment variable |
+
+### Sensitive Paths (Always Blocked)
+The following paths are automatically blocked even if they match an allow rule:
+- SSH keys and GPG (`~/.ssh`, `~/.gnupg`)
+- Cloud credentials (`~/.aws`, `~/.azure`, `~/.config/gcloud`, `~/.kube`)
+- Browser data (Chrome, Firefox, Safari, Edge)
+- Password managers (1Password, Bitwarden, KeePassXC, keychains)
+- Development secrets (`~/.npmrc`, `~/.pypirc`, `~/.netrc`, `~/.git-credentials`)
+- System secrets (`/etc/shadow`, `/etc/sudoers`, `/etc/ssh/*_key`)
 
 ### Network Behavior
 - Domains in `allow_domains` automatically permit their resolved IPs

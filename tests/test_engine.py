@@ -18,7 +18,9 @@ class TestConfigLoading:
         # Default config uses variables like $PWD which get expanded at runtime
         assert "$PWD" in engine.config["allow_read"]
         assert "$PWD" in engine.config["allow_create"]
-        assert engine.config["allow_modify"] == []
+        # Pip-friendly defaults allow modify in temp dirs
+        assert "$TMPDIR" in engine.config["allow_modify"]
+        assert "$PIP_CACHE" in engine.config["allow_modify"]
         assert engine.config["allow_delete"] == []
 
     def test_load_config_from_file(self, tmp_path):
@@ -854,7 +856,8 @@ class TestPathToVariable:
 
         if site_packages:
             result = engine._path_to_variable(f"{site_packages}/mypackage")
-            assert result == "$PYTHON_SITE_PACKAGES/mypackage"
+            # If in a venv, it converts to $VENV, otherwise $PYTHON_SITE_PACKAGES
+            assert "$PYTHON_SITE_PACKAGES" in result or "$VENV" in result
 
     def test_no_conversion_for_unknown_path(self, tmp_path):
         """Test that unknown paths are returned unchanged."""

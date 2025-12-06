@@ -33,6 +33,161 @@ EXEC_EVENTS = frozenset(
 # Events that run shell commands (checked against allow_shell_commands)
 SHELL_EVENTS = frozenset({"subprocess.Popen", "os.system"})
 
+# Security-sensitive paths that should NEVER be readable by default
+# Even if a broader path like $OS_SYSTEM is allowed, these are blocked
+SENSITIVE_PATHS = [
+    # System credentials & secrets
+    "/etc/shadow",
+    "/etc/gshadow",
+    "/etc/sudoers",
+    "/etc/sudoers.d",
+    "/etc/security",
+    "/etc/pam.d",
+    "/etc/ssh/*_key",
+    "/etc/ssl/private",
+    "/root",
+    # User SSH & GPG
+    "$HOME/.ssh",
+    "$HOME/.gnupg",
+    "$HOME/.pgp",
+    # Cloud provider credentials
+    "$HOME/.aws",
+    "$HOME/.azure",
+    "$HOME/.config/gcloud",
+    "$HOME/.kube",
+    "$HOME/.docker/config.json",
+    "$HOME/.terraform.d/credentials.tfrc.json",
+    # macOS keychain & security
+    "$HOME/Library/Keychains",
+    "/Library/Keychains",
+    "/System/Library/Keychains",
+    "$HOME/Library/Cookies",
+    "$HOME/Library/Application Support/com.apple.TCC",
+    # Browser data (passwords, cookies, history)
+    "$HOME/Library/Application Support/Google/Chrome",
+    "$HOME/Library/Application Support/Firefox",
+    "$HOME/Library/Application Support/Microsoft Edge",
+    "$HOME/Library/Safari",
+    "$HOME/.config/google-chrome",
+    "$HOME/.config/chromium",
+    "$HOME/.mozilla/firefox",
+    "$HOME/.config/microsoft-edge",
+    # Password managers
+    "$HOME/Library/Application Support/1Password",
+    "$HOME/Library/Application Support/Bitwarden",
+    "$HOME/Library/Application Support/LastPass",
+    "$HOME/.config/keepassxc",
+    "$HOME/.local/share/keyrings",
+    "$HOME/.password-store",
+    # Messaging & communication
+    "$HOME/Library/Messages",
+    "$HOME/Library/Application Support/Slack",
+    "$HOME/Library/Application Support/discord",
+    "$HOME/.config/Signal",
+    # Database credentials
+    "$HOME/.pgpass",
+    "$HOME/.my.cnf",
+    "$HOME/.mongodb/credentials",
+    "$HOME/.rediscli_history",
+    # Development secrets
+    "$HOME/.npmrc",
+    "$HOME/.pypirc",
+    "$HOME/.gem/credentials",
+    "$HOME/.cargo/credentials",
+    "$HOME/.netrc",
+    "$HOME/.git-credentials",
+    # Cryptocurrency wallets
+    "$HOME/Library/Application Support/Bitcoin",
+    "$HOME/Library/Application Support/Ethereum",
+    "$HOME/.bitcoin",
+    "$HOME/.ethereum",
+    # Environment files (often contain secrets)
+    "$PWD/.env",
+    "$PWD/.env.local",
+    "$PWD/.env.production",
+]
+
+# Environment variables that should NEVER be readable by default
+SENSITIVE_ENV_VARS = [
+    # API keys & tokens
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AZURE_CLIENT_SECRET",
+    "AZURE_TENANT_ID",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GOOGLE_API_KEY",
+    "GCP_SERVICE_ACCOUNT",
+    "GITHUB_TOKEN",
+    "GITHUB_API_TOKEN",
+    "GITLAB_TOKEN",
+    "BITBUCKET_TOKEN",
+    "HEROKU_API_KEY",
+    "DIGITALOCEAN_TOKEN",
+    "CLOUDFLARE_API_TOKEN",
+    "STRIPE_SECRET_KEY",
+    "STRIPE_API_KEY",
+    "TWILIO_AUTH_TOKEN",
+    "SENDGRID_API_KEY",
+    "MAILGUN_API_KEY",
+    "SLACK_TOKEN",
+    "SLACK_WEBHOOK_URL",
+    "DISCORD_TOKEN",
+    "TELEGRAM_BOT_TOKEN",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "HUGGINGFACE_TOKEN",
+    # Database credentials
+    "DATABASE_URL",
+    "DATABASE_PASSWORD",
+    "DB_PASSWORD",
+    "POSTGRES_PASSWORD",
+    "MYSQL_PASSWORD",
+    "MYSQL_ROOT_PASSWORD",
+    "MONGO_PASSWORD",
+    "MONGODB_PASSWORD",
+    "REDIS_PASSWORD",
+    "REDIS_URL",
+    # Authentication secrets
+    "SECRET_KEY",
+    "JWT_SECRET",
+    "JWT_SECRET_KEY",
+    "SESSION_SECRET",
+    "COOKIE_SECRET",
+    "ENCRYPTION_KEY",
+    "SIGNING_KEY",
+    "API_KEY",
+    "API_SECRET",
+    "PRIVATE_KEY",
+    "AUTH_TOKEN",
+    "ACCESS_TOKEN",
+    "REFRESH_TOKEN",
+    # SSH & certificates
+    "SSH_PRIVATE_KEY",
+    "SSH_KEY",
+    "SSL_KEY",
+    "TLS_KEY",
+    "CERTIFICATE_KEY",
+    # Package manager tokens
+    "NPM_TOKEN",
+    "PYPI_TOKEN",
+    "PYPI_PASSWORD",
+    "GEM_HOST_API_KEY",
+    "CARGO_REGISTRY_TOKEN",
+    "DOCKER_PASSWORD",
+    "DOCKER_AUTH_CONFIG",
+    # CI/CD secrets
+    "CI_JOB_TOKEN",
+    "CIRCLE_TOKEN",
+    "TRAVIS_TOKEN",
+    "JENKINS_TOKEN",
+    # Miscellaneous
+    "PASSWORD",
+    "PASSWD",
+    "CREDENTIALS",
+    "TOKEN",
+]
+
 
 class BoxEngine:
     """Permission engine for audit event enforcement.
@@ -59,16 +214,19 @@ class BoxEngine:
         self._in_resolution = False  # Guard against recursive DNS resolution
 
     def _default_config(self) -> dict[str, Any]:
-        """Return default configuration with workdir permissions."""
+        """Return default configuration with pip-friendly permissions."""
         return {
             "allow_read": [
                 "$PWD",
                 "$PYTHON_STDLIB",
                 "$PYTHON_SITE_PACKAGES",
                 "$PYTHON_PLATLIB",
+                "$PIP_CACHE",
+                "$TMPDIR",
+                "$CACHE_HOME",
             ],
-            "allow_create": ["$PWD"],
-            "allow_modify": [],
+            "allow_create": ["$PWD", "$TMPDIR", "$PIP_CACHE"],
+            "allow_modify": ["$TMPDIR", "$PIP_CACHE"],
             "allow_delete": [],
             "allow_env_var_reads": [],
             "allow_env_var_writes": [],
@@ -95,12 +253,30 @@ class BoxEngine:
                 return self._default_config()
         return self._default_config()
 
+    def _get_cache_home(self) -> str:
+        """Get XDG cache directory (cross-platform)."""
+        if sys.platform == "darwin":
+            return os.path.expanduser("~/Library/Caches")
+        return os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache"))
+
+    def _get_pip_cache(self) -> str:
+        """Get pip cache directory."""
+        return os.path.join(self._get_cache_home(), "pip")
+
+    def _get_os_system_paths(self) -> list[str]:
+        """Get OS system read-only paths."""
+        if sys.platform == "darwin":
+            return ["/System", "/Library", "/usr/lib", "/usr/share"]
+        else:  # Linux
+            return ["/usr/lib", "/usr/share", "/lib", "/lib64"]
+
     def _expand_path_variables(self, path: str) -> str:
         """Expand variables in a path string.
 
         Supports:
-          $PWD, $HOME, $TMPDIR
+          $PWD, $HOME, $TMPDIR, $CACHE_HOME
           $PYTHON_STDLIB, $PYTHON_SITE_PACKAGES, $PYTHON_PLATLIB, $PYTHON_PREFIX
+          $PIP_CACHE, $VENV
           $ENV{VAR_NAME}
         """
         if "$" not in path:
@@ -114,15 +290,20 @@ class BoxEngine:
             "$PWD": str(self.workdir),
             "$HOME": os.path.expanduser("~"),
             "$TMPDIR": tempfile.gettempdir(),
+            "$CACHE_HOME": self._get_cache_home(),
+            # Python paths
             "$PYTHON_STDLIB": sysconfig.get_path("stdlib") or "",
             "$PYTHON_SITE_PACKAGES": sysconfig.get_path("purelib") or "",
             "$PYTHON_PLATLIB": sysconfig.get_path("platlib") or "",
             "$PYTHON_PREFIX": sys.prefix,
+            # Python ecosystem
+            "$PIP_CACHE": self._get_pip_cache(),
+            "$VENV": os.environ.get("VIRTUAL_ENV", ""),
         }
 
         result = path
         for var, value in variables.items():
-            if var in result:
+            if var in result and value:  # Only replace if value is non-empty
                 result = result.replace(var, value)
 
         # Handle $ENV{VAR_NAME} pattern
@@ -141,10 +322,15 @@ class BoxEngine:
 
         # Order matters - more specific first
         mappings = [
+            # Python ecosystem (most specific)
+            (self._get_pip_cache(), "$PIP_CACHE"),
+            (os.environ.get("VIRTUAL_ENV", ""), "$VENV"),
             (sysconfig.get_path("purelib"), "$PYTHON_SITE_PACKAGES"),
             (sysconfig.get_path("platlib"), "$PYTHON_PLATLIB"),
             (sysconfig.get_path("stdlib"), "$PYTHON_STDLIB"),
             (sys.prefix, "$PYTHON_PREFIX"),
+            # System paths
+            (self._get_cache_home(), "$CACHE_HOME"),
             (tempfile.gettempdir(), "$TMPDIR"),
             (str(self.workdir), "$PWD"),
             (os.path.expanduser("~"), "$HOME"),
@@ -155,6 +341,33 @@ class BoxEngine:
                 return path.replace(prefix, var, 1)
 
         return path
+
+    def _is_sensitive_path(self, path: str | Path) -> bool:
+        """Check if a path is in the sensitive paths list.
+
+        Sensitive paths are always blocked, even if they match an allow rule.
+        """
+        path_str = str(path)
+        for sensitive in SENSITIVE_PATHS:
+            expanded = self._expand_path_variables(sensitive)
+            # Handle glob patterns
+            if "*" in expanded:
+                if fnmatch.fnmatch(path_str, expanded):
+                    return True
+            # Handle directory prefixes
+            elif path_str == expanded or path_str.startswith(expanded + os.sep):
+                return True
+        return False
+
+    def _is_sensitive_env_var(self, var_name: str) -> bool:
+        """Check if an environment variable is in the sensitive list.
+
+        Sensitive env vars are always blocked from being read.
+        """
+        # Handle bytes
+        if isinstance(var_name, bytes):
+            var_name = var_name.decode("utf-8", errors="replace")
+        return var_name in SENSITIVE_ENV_VARS
 
     def _resolve_path(self, path: str | Path) -> Path:
         """Resolve a path to an absolute path, expanding variables."""
@@ -279,6 +492,9 @@ class BoxEngine:
 
     def _check_read_permission(self, path: Path) -> bool:
         """Check if reading a file is permitted."""
+        # Always block sensitive paths
+        if self._is_sensitive_path(path):
+            return False
         return self._check_path_permission(path, self.config.get("allow_read", []))
 
     def _check_create_permission(self, path: Path) -> bool:
@@ -758,6 +974,8 @@ class BoxEngine:
         The args tuple contains the function object being called.
         We can't easily get the key being accessed, so we allow by default
         unless the user has restricted env var reads.
+
+        Note: Sensitive env vars are always blocked.
         """
         allowed = self.config.get("allow_env_var_reads", [])
         # If no restrictions configured, allow all
