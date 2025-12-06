@@ -63,8 +63,8 @@ class BoxEngine:
                 "$PYTHON_PLATLIB",
             ],
             "allow_create": ["$PWD"],
-            "allow_modify": ["$PWD"],
-            "allow_delete": [],  # Conservative default - no delete allowed
+            "allow_modify": [],
+            "allow_delete": [],
             "allow_env_var_reads": [],
             "allow_env_var_writes": [],
             "allow_domains": PYPI_DOMAINS.copy(),

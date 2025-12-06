@@ -18,8 +18,8 @@ class TestConfigLoading:
         # Default config uses variables like $PWD which get expanded at runtime
         assert "$PWD" in engine.config["allow_read"]
         assert "$PWD" in engine.config["allow_create"]
-        assert "$PWD" in engine.config["allow_modify"]
-        assert engine.config["allow_delete"] == []  # Conservative default
+        assert engine.config["allow_modify"] == []
+        assert engine.config["allow_delete"] == []
 
     def test_load_config_from_file(self, tmp_path):
         """Test loading config from JSON file."""
@@ -72,8 +72,12 @@ class TestFilePermissions:
         assert engine.check_permission("open", (str(test_file), "w", 0))
 
     def test_allow_modify_in_workdir(self, tmp_path):
-        """Test that modifying files in workdir is allowed by default."""
-        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+        """Test that modifying files in workdir is allowed when configured."""
+        config = {"allow_modify": ["$PWD"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
         test_file = tmp_path / "existing.txt"
         test_file.write_text("existing content")
 
