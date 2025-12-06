@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import yaml
+from malwi_box import toml
 
 # PyPI-related domains for default allow_domains
 PYPI_DOMAINS = [
@@ -198,7 +198,7 @@ class BoxEngine:
     """
 
     def __init__(
-        self, config_path: str = ".malwi-box.yaml", workdir: str | None = None
+        self, config_path: str = ".malwi-box.toml", workdir: str | None = None
     ):
         """Initialize the BoxEngine.
 
@@ -237,18 +237,18 @@ class BoxEngine:
         }
 
     def _load_config(self) -> dict[str, Any]:
-        """Load config from YAML file or return defaults."""
+        """Load config from TOML file or return defaults."""
         if self.config_path.exists():
             try:
                 with open(self.config_path) as f:
-                    config = yaml.safe_load(f) or {}
+                    config = toml.load(f) or {}
                 # Merge with defaults for any missing keys
                 defaults = self._default_config()
                 for key, value in defaults.items():
                     if key not in config:
                         config[key] = value
                 return config
-            except (yaml.YAMLError, OSError) as e:
+            except (toml.TOMLError, OSError) as e:
                 sys.stderr.write(f"[malwi-box] Warning: Could not load config: {e}\n")
                 return self._default_config()
         return self._default_config()
@@ -904,8 +904,8 @@ class BoxEngine:
         if self.config_path.exists():
             try:
                 with open(self.config_path) as f:
-                    config = yaml.safe_load(f) or {}
-            except (yaml.YAMLError, OSError):
+                    config = toml.load(f) or {}
+            except (toml.TOMLError, OSError):
                 config = self._default_config()
         else:
             config = self._default_config()
@@ -982,7 +982,7 @@ class BoxEngine:
         # Write updated config
         try:
             with open(self.config_path, "w") as f:
-                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+                toml.dump(config, f)
         except OSError as e:
             sys.stderr.write(f"[malwi-box] Warning: Could not save config: {e}\n")
 

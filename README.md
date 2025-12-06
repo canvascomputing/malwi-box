@@ -5,7 +5,11 @@
 <h1 align="center">malwi-box</h1>
 
 <p align="center">
-  <em>Intercept, audit, and block critical Python operations at runtime.</em>
+  <strong>Intercept, audit, and block critical Python operations at runtime.</strong>
+</p>
+
+<p align="center">
+  <em>Shipped without any dependencies</em>
 </p>
 
 ## Use Cases
@@ -31,11 +35,11 @@ uv tool install malwi-box
 
 | Command | Description |
 |---------|-------------|
-| `malwi-box run script.py` | Block operations not allowed in `.malwi-box.yaml` |
+| `malwi-box run script.py` | Block operations not allowed in `.malwi-box.toml` |
 | `malwi-box run --review script.py` | Approve/deny each operation, save to config |
 | `malwi-box run --force script.py` | Log violations without blocking |
 | `malwi-box install package` | Install pip package with config restrictions |
-| `malwi-box config create` | Create default `.malwi-box.yaml` |
+| `malwi-box config create` | Create default `.malwi-box.toml` |
 
 ## Quick Start
 
@@ -55,102 +59,102 @@ malwi-box install --review sketchy-package
 ```bash
 malwi-box run examples/network_request.py
 ```
-`.malwi-box.yaml`:
-```yaml
-allow_domains:
-- httpbin.org
+`.malwi-box.toml`:
+```toml
+allow_domains = ["httpbin.org"]
 ```
 
 ### Allow file reads
 ```bash
 malwi-box run examples/file_read.py
 ```
-`.malwi-box.yaml`:
-```yaml
-allow_read:
-- /etc/passwd
+`.malwi-box.toml`:
+```toml
+allow_read = ["/etc/passwd"]
 ```
 
 ### Allow shell commands
 ```bash
 malwi-box run examples/system_command.py
 ```
-`.malwi-box.yaml`:
-```yaml
-allow_shell_commands:
-- /bin/ls *
+`.malwi-box.toml`:
+```toml
+allow_shell_commands = ["/bin/ls *"]
 ```
 
 ### Allow executables
 ```bash
 malwi-box run examples/executable_control.py
 ```
-`.malwi-box.yaml`:
-```yaml
-allow_executables:
-- /usr/bin/echo
-- path: /usr/bin/git
-  hash: sha256:e3b0c44...
+`.malwi-box.toml`:
+```toml
+allow_executables = [
+  "/usr/bin/echo",
+  { path = "/usr/bin/git", hash = "sha256:e3b0c44..." },
+]
 ```
 
 ### Review mode
 ```bash
 malwi-box run --review examples/network_request.py
 # 'y' to approve, 'n' to deny, 'i' to inspect call stack
-# Approved operations saved to .malwi-box.yaml
+# Approved operations saved to .malwi-box.toml
 ```
 
 ## Configuration Reference
 
-Config file: `.malwi-box.yaml`
+Config file: `.malwi-box.toml`
 
-```yaml
+```toml
 # File access permissions
-allow_read:
-  - $PWD                      # working directory
-  - $PYTHON_STDLIB            # Python standard library
-  - $PYTHON_SITE_PACKAGES     # installed packages
-  - $HOME/.config/myapp       # specific config directory
-  - /etc/hosts                # specific file
+allow_read = [
+  "$PWD",                     # working directory
+  "$PYTHON_STDLIB",           # Python standard library
+  "$PYTHON_SITE_PACKAGES",    # installed packages
+  "$HOME/.config/myapp",      # specific config directory
+  "/etc/hosts",               # specific file
+]
 
-allow_create:
-  - $PWD                      # allow creating files in workdir
-  - $TMPDIR                   # allow temp files
+allow_create = [
+  "$PWD",                     # allow creating files in workdir
+  "$TMPDIR",                  # allow temp files
+]
 
-allow_modify:
-  - $PWD/data                 # only modify files in data/
-  - path: /etc/myapp.conf     # modify specific file
-    hash: sha256:abc123...    # only if hash matches
+allow_modify = [
+  "$PWD/data",                # only modify files in data/
+  { path = "/etc/myapp.conf", hash = "sha256:abc123..." },
+]
 
-allow_delete: []              # no deletions allowed
+allow_delete = []             # no deletions allowed
 
 # Network permissions
-allow_domains:
-  - pypi.org                  # allow any port
-  - files.pythonhosted.org
-  - api.example.com:443       # restrict to specific port
+allow_domains = [
+  "pypi.org",                 # allow any port
+  "files.pythonhosted.org",
+  "api.example.com:443",      # restrict to specific port
+]
 
-allow_ips:
-  - 10.0.0.0/8                # CIDR notation
-  - 192.168.1.100:8080        # specific IP:port
-  - "[::1]:443"               # IPv6 with port
+allow_ips = [
+  "10.0.0.0/8",               # CIDR notation
+  "192.168.1.100:8080",       # specific IP:port
+  "[::1]:443",                # IPv6 with port
+]
 
 # Process execution
-allow_executables:
-  - /usr/bin/git              # allow by path
-  - $PWD/.venv/bin/*          # glob pattern
-  - path: /usr/bin/curl       # with hash verification
-    hash: sha256:abc123...
+allow_executables = [
+  "/usr/bin/git",             # allow by path
+  "$PWD/.venv/bin/*",         # glob pattern
+  { path = "/usr/bin/curl", hash = "sha256:abc123..." },
+]
 
-allow_shell_commands:
-  - /usr/bin/git *            # glob pattern matching
-  - /usr/bin/curl *
+allow_shell_commands = [
+  "/usr/bin/git *",           # glob pattern matching
+  "/usr/bin/curl *",
+]
 
 # Environment variables
-allow_env_var_reads: []       # restrict env access
-allow_env_var_writes:
-  - PATH
-  - PYTHONPATH
+allow_env_var_reads = []      # restrict env access
+allow_env_var_writes = ["PATH", "PYTHONPATH"]
 ```
 
 ### Path Variables
@@ -185,10 +189,10 @@ The following paths are automatically blocked even if they match an allow rule:
 
 ### Hash Verification
 Executables and files can include SHA256 hashes:
-```yaml
-allow_executables:
-  - path: /usr/bin/git
-    hash: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```toml
+allow_executables = [
+  { path = "/usr/bin/git", hash = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+]
 ```
 
 ## How It Works

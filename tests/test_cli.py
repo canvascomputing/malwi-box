@@ -74,7 +74,7 @@ class TestConfigCreate:
             cwd=tmp_path,
         )
         assert result.returncode == 0
-        assert (tmp_path / ".malwi-box.yaml").exists()
+        assert (tmp_path / ".malwi-box.toml").exists()
         assert "Created" in result.stdout
 
     def test_config_create_custom_path(self, tmp_path):
@@ -98,8 +98,8 @@ class TestConfigCreate:
 
     def test_config_create_refuses_overwrite(self, tmp_path):
         """Test that config create refuses to overwrite existing file."""
-        config = tmp_path / ".malwi-box.yaml"
-        config.write_text("allow_read: []")
+        config = tmp_path / ".malwi-box.toml"
+        config.write_text('allow_read = []')
         result = subprocess.run(
             [sys.executable, "-m", "malwi_box.cli", "config", "create"],
             capture_output=True,
@@ -178,7 +178,8 @@ class TestFormatEvent:
         """Test formatting of subprocess events."""
         from malwi_box.cli import _format_event
 
-        args = ("/bin/ls", ["-la", "/tmp"], None, None)
+        # args[1] is argv which includes program name
+        args = ("/bin/ls", ["/bin/ls", "-la", "/tmp"], None, None)
         result = _format_event("subprocess.Popen", args)
         assert result == "Execute: /bin/ls -la /tmp"
 
@@ -224,8 +225,8 @@ except SystemExit:
 print("done")
 """)
         # Create empty config to ensure /etc/passwd is not allowed
-        config = tmp_path / ".malwi-box.yaml"
-        config.write_text("allow_read: []\nallow_domains: []")
+        config = tmp_path / ".malwi-box.toml"
+        config.write_text('allow_read = []\nallow_domains = []')
 
         # Run with review mode, deny the request
         result = subprocess.run(

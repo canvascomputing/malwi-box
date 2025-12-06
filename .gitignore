@@ -45,4 +45,4 @@ uv.lock
 .DS_Store
 
 # malwi-box config
-.malwi-box.yaml
+.malwi-box.toml

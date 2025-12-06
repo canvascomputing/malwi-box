@@ -96,6 +96,12 @@ def install_command(args: argparse.Namespace) -> int:
     if pip_args is None:
         return 1
 
+    try:
+        from pip._internal.cli.main import main as pip_main
+    except ImportError:
+        print("Error: pip is not installed", file=sys.stderr)
+        return 1
+
     from malwi_box.engine import BoxEngine
     from malwi_box.hooks import review_hook, run_hook
 
@@ -106,15 +112,12 @@ def install_command(args: argparse.Namespace) -> int:
     else:
         run_hook.setup_hook(engine)
 
-    from pip._internal.cli.main import main as pip_main
-
     return pip_main(pip_args)
 
 
 def config_create_command(args: argparse.Namespace) -> int:
     """Create a default config file."""
-    import yaml
-
+    from malwi_box import toml
     from malwi_box.engine import BoxEngine
 
     path = args.path
@@ -126,7 +129,7 @@ def config_create_command(args: argparse.Namespace) -> int:
     config = engine._default_config()
 
     with open(path, "w") as f:
-        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+        toml.dump(config, f)
 
     print(f"Created {path}")
     return 0
@@ -197,8 +200,8 @@ def main() -> int:
     )
     create_parser.add_argument(
         "--path",
-        default=".malwi-box.yaml",
-        help="Path to config file (default: .malwi-box.yaml)",
+        default=".malwi-box.toml",
+        help="Path to config file (default: .malwi-box.toml)",
     )
 
     args = parser.parse_args()
