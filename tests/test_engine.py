@@ -24,7 +24,7 @@ class TestConfigLoading:
         config = {
             "allow_read": ["/etc/hosts"],
             "allow_pypi_requests": False,
-            "allow_system_commands": ["ls *"],
+            "allow_shell_commands": ["ls *"],
         }
         config_path = tmp_path / ".malwi-box"
         config_path.write_text(json.dumps(config))
@@ -33,7 +33,7 @@ class TestConfigLoading:
 
         assert "/etc/hosts" in engine.config["allow_read"]
         assert engine.config["allow_pypi_requests"] is False
-        assert "ls *" in engine.config["allow_system_commands"]
+        assert "ls *" in engine.config["allow_shell_commands"]
 
     def test_merge_missing_keys_with_defaults(self, tmp_path):
         """Test that missing config keys are filled with defaults."""
@@ -45,7 +45,8 @@ class TestConfigLoading:
 
         # Should have default for missing keys
         assert "allow_read" in engine.config
-        assert "allow_system_commands" in engine.config
+        assert "allow_shell_commands" in engine.config
+        assert "allow_executables" in engine.config
 
 
 class TestFilePermissions:
@@ -156,12 +157,15 @@ class TestHashVerification:
         assert not engine._verify_file_hash(test_file, wrong_hash)
 
 
-class TestSystemCommands:
-    """Tests for system command permission checks."""
+class TestShellCommands:
+    """Tests for shell command permission checks."""
 
     def test_allow_matching_glob(self, tmp_path):
         """Test that commands matching glob pattern are allowed."""
-        config = {"allow_system_commands": ["/bin/ls *", "/usr/bin/git *", "ls *"]}
+        config = {
+            "allow_executables": ["*"],  # Allow all executables
+            "allow_shell_commands": ["/bin/ls *", "/usr/bin/git *", "ls *"]
+        }
         config_path = tmp_path / ".malwi-box"
         config_path.write_text(json.dumps(config))
 
@@ -181,27 +185,259 @@ class TestSystemCommands:
 
     def test_block_non_matching_command(self, tmp_path):
         """Test that commands not matching patterns are blocked."""
-        config = {"allow_system_commands": ["ls *"]}
+        config = {
+            "allow_executables": ["*"],  # Allow all executables
+            "allow_shell_commands": ["ls *"]
+        }
         config_path = tmp_path / ".malwi-box"
         config_path.write_text(json.dumps(config))
 
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
-        # rm is not in allowed patterns
+        # rm is not in allowed shell command patterns
         assert not engine.check_permission(
             "subprocess.Popen", ("/bin/rm", ["-rf", "/tmp/test"], None, None)
         )
 
     def test_os_system_command(self, tmp_path):
-        """Test os.system event handling."""
-        config = {"allow_system_commands": ["echo *"]}
+        """Test os.system event handling (shell commands only, no executable check)."""
+        config = {"allow_shell_commands": ["echo *"]}
         config_path = tmp_path / ".malwi-box"
         config_path.write_text(json.dumps(config))
 
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
+        # os.system only checks shell commands, not executables
         assert engine.check_permission("os.system", ("echo hello",))
         assert not engine.check_permission("os.system", ("rm -rf /",))
+
+
+class TestExecutableControl:
+    """Tests for executable control (allow_executables)."""
+
+    def test_empty_list_blocks_all(self, tmp_path):
+        """Test that empty allow_executables blocks all executables."""
+        config = {"allow_executables": [], "allow_shell_commands": ["*"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Empty list should block all executables
+        assert not engine.check_permission(
+            "subprocess.Popen", ("/bin/ls", ["-la"], None, None)
+        )
+        assert not engine.check_permission("os.exec", ("/bin/bash", [], None))
+        assert not engine.check_permission("ctypes.dlopen", ("/usr/lib/libc.dylib",))
+
+    def test_glob_allows_all(self, tmp_path):
+        """Test that '*' glob pattern allows all executables."""
+        config = {"allow_executables": ["*"], "allow_shell_commands": ["*"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # "*" pattern should allow all executables
+        assert engine.check_permission(
+            "subprocess.Popen", ("/bin/ls", ["-la"], None, None)
+        )
+        assert engine.check_permission("os.exec", ("/bin/bash", [], None))
+        assert engine.check_permission("ctypes.dlopen", ("/usr/lib/libc.dylib",))
+
+    def test_allow_specific_executable(self, tmp_path):
+        """Test allowing a specific executable path."""
+        config = {"allow_executables": ["/bin/ls"], "allow_shell_commands": ["*"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # /bin/ls should be allowed
+        assert engine.check_permission(
+            "subprocess.Popen", ("/bin/ls", ["-la"], None, None)
+        )
+        # /bin/rm should be blocked (not in allow_executables)
+        assert not engine.check_permission(
+            "subprocess.Popen", ("/bin/rm", ["-rf"], None, None)
+        )
+
+    def test_allow_executable_with_variable(self, tmp_path):
+        """Test allowing executables with path variables."""
+        # Create a fake executable in workdir
+        exe = tmp_path / "my_script"
+        exe.write_text("#!/bin/bash\necho hello")
+        exe.chmod(0o755)
+
+        config = {"allow_executables": ["$PWD/my_script"], "allow_shell_commands": ["*"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        assert engine.check_permission(
+            "subprocess.Popen", (str(exe), [], None, None)
+        )
+
+    def test_block_unresolvable_executable(self, tmp_path):
+        """Test that unresolvable executables are blocked when restrictions exist."""
+        config = {"allow_executables": ["/bin/ls"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Nonexistent executable should be blocked
+        assert not engine.check_permission(
+            "subprocess.Popen", ("nonexistent_command_xyz", [], None, None)
+        )
+
+    def test_os_exec_event(self, tmp_path):
+        """Test executable control for os.exec event."""
+        config = {"allow_executables": ["/bin/bash"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # os.exec: (path, args, env)
+        assert engine.check_permission("os.exec", ("/bin/bash", ["-c", "echo"], None))
+        assert not engine.check_permission("os.exec", ("/bin/sh", ["-c", "echo"], None))
+
+    def test_os_spawn_event(self, tmp_path):
+        """Test executable control for os.spawn event."""
+        config = {"allow_executables": ["/bin/echo"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # os.spawn: (mode, path, args, env)
+        assert engine.check_permission("os.spawn", (0, "/bin/echo", ["hello"], None))
+        assert not engine.check_permission("os.spawn", (0, "/bin/cat", ["file"], None))
+
+    def test_ctypes_dlopen_event(self, tmp_path):
+        """Test executable control for ctypes.dlopen event."""
+        config = {"allow_executables": ["/usr/lib/libc.dylib"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # ctypes.dlopen: (name,)
+        assert engine.check_permission("ctypes.dlopen", ("/usr/lib/libc.dylib",))
+        assert not engine.check_permission("ctypes.dlopen", ("/usr/lib/other.dylib",))
+
+    def test_executable_with_hash_verification(self, tmp_path):
+        """Test executable with hash verification."""
+        # Create a test executable
+        exe = tmp_path / "test_exe"
+        exe.write_text("#!/bin/bash\necho test")
+        exe.chmod(0o755)
+
+        # Get the actual hash
+        import hashlib
+        actual_hash = hashlib.sha256(exe.read_bytes()).hexdigest()
+
+        config = {
+            "allow_executables": [
+                {"path": str(exe), "hash": f"sha256:{actual_hash}"}
+            ],
+            "allow_shell_commands": ["*"]
+        }
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Correct hash should pass
+        assert engine.check_permission(
+            "subprocess.Popen", (str(exe), [], None, None)
+        )
+
+    def test_executable_with_wrong_hash_blocked(self, tmp_path):
+        """Test that wrong hash blocks the executable."""
+        exe = tmp_path / "test_exe"
+        exe.write_text("#!/bin/bash\necho test")
+        exe.chmod(0o755)
+
+        config = {
+            "allow_executables": [
+                {"path": str(exe), "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"}
+            ],
+            "allow_shell_commands": ["*"]
+        }
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Wrong hash should fail
+        assert not engine.check_permission(
+            "subprocess.Popen", (str(exe), [], None, None)
+        )
+
+    def test_save_and_reload_os_exec_permission(self, tmp_path):
+        """Test that saved os.exec permission works after reload.
+
+        This reproduces a bug where executable permissions saved in review mode
+        did not work on subsequent runs because the path resolution differed.
+        """
+        config_path = tmp_path / ".malwi-box"
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Simulate what happens in review mode: record a decision for os.exec
+        engine.record_decision(
+            "os.exec",
+            ("/bin/echo", ["/bin/echo", "hello"]),
+            allowed=True,
+            details={"executable": "/bin/echo"},
+        )
+        engine.save_decisions()
+
+        # Reload config and verify permission works
+        engine2 = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+        args = ("/bin/echo", ["/bin/echo", "hello"])
+        assert engine2.check_permission("os.exec", args)
+
+    def test_save_and_reload_subprocess_permission(self, tmp_path):
+        """Test that saved subprocess.Popen permission works after reload."""
+        config_path = tmp_path / ".malwi-box"
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Simulate review mode decision
+        engine.record_decision(
+            "subprocess.Popen",
+            ("/bin/ls", ["-la"]),
+            allowed=True,
+            details={"executable": "/bin/ls", "command": "/bin/ls -la"},
+        )
+        engine.save_decisions()
+
+        # Reload and verify
+        engine2 = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+        assert engine2.check_permission("subprocess.Popen", ("/bin/ls", ["-la"]))
+
+    def test_save_executable_hash_fallback(self, tmp_path):
+        """Test that unresolvable executable falls back to path-only."""
+        config_path = tmp_path / ".malwi-box"
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Record decision for non-existent executable
+        exe = "nonexistent_binary_xyz"
+        engine.record_decision(
+            "subprocess.Popen",
+            (exe, []),
+            allowed=True,
+            details={"executable": exe, "command": exe},
+        )
+        engine.save_decisions()
+
+        saved_config = json.loads(config_path.read_text())
+        executables = saved_config.get("allow_executables", [])
+        assert len(executables) == 1
+        # Should be plain string since we can't compute hash
+        assert executables[0] == "nonexistent_binary_xyz"
 
 
 class TestDomainPermissions:
@@ -380,7 +616,7 @@ class TestDecisionRecording:
         assert "/tmp/existing.txt" in saved_config.get("allow_modify", [])
 
     def test_record_and_save_command_decision(self, tmp_path):
-        """Test that command decisions are saved correctly."""
+        """Test that command decisions are saved with hash."""
         config_path = tmp_path / ".malwi-box"
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
@@ -388,13 +624,20 @@ class TestDecisionRecording:
             "subprocess.Popen",
             ("git", ["status"]),
             allowed=True,
-            details={"command": "git status"},
+            details={"command": "git status", "executable": "git"},
         )
 
         engine.save_decisions()
 
         saved_config = json.loads(config_path.read_text())
-        assert "git status" in saved_config.get("allow_system_commands", [])
+        assert "git status" in saved_config.get("allow_shell_commands", [])
+        # Executable should be saved with hash
+        executables = saved_config.get("allow_executables", [])
+        assert len(executables) == 1
+        entry = executables[0]
+        assert isinstance(entry, dict)
+        assert entry["path"] == "git"
+        assert entry["hash"].startswith("sha256:")
 
     def test_record_and_save_domain_with_port(self, tmp_path):
         """Test that domain decisions with port are saved correctly."""

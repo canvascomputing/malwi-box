@@ -1,21 +1,32 @@
-"""Example: Running system commands.
+"""Example: Running shell commands.
 
-Tests the `allow_system_commands` config option.
+Tests the `allow_shell_commands` config option which controls what shell
+commands can be executed via subprocess.Popen and os.system.
 
 Usage:
-    # Will be blocked - ls is not in allow_system_commands
+    # Will be blocked - default config has allow_shell_commands: []
     uv run malwi-box run examples/system_command.py
 
     # Use review mode to allow interactively
-    uv run malwi-box review examples/system_command.py
+    uv run malwi-box run --review examples/system_command.py
 
-Config to allow:
-    "allow_system_commands": ["ls *"]
+Config examples:
+    # Block all shell commands (default)
+    "allow_shell_commands": []
 
-    Or more specific:
-    "allow_system_commands": ["/bin/ls -la /tmp"]
+    # Allow ALL shell commands (use "*" glob pattern)
+    "allow_shell_commands": ["*"]
 
-Note: Patterns use glob matching (fnmatch).
+    # Allow specific commands
+    "allow_shell_commands": ["ls *", "git status"]
+
+    # Allow with exact arguments
+    "allow_shell_commands": ["/bin/ls -la /tmp"]
+
+Glob patterns:
+    - "*" matches any command (allows ALL shell commands)
+    - "ls *" matches any ls command with any arguments
+    - "git *" matches any git command
 """
 
 import subprocess

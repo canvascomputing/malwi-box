@@ -58,11 +58,27 @@ def format_event(event: str, args: tuple) -> str:
     if event == "subprocess.Popen":
         cmd_args = args[1] if len(args) > 1 else []
         cmd = _truncate(_build_command(args[0], cmd_args), MAX_CMD_LEN)
-        return f"Run command: {cmd}"
+        return f"Execute: {cmd}"
 
     if event == "os.system":
         cmd = _truncate(str(args[0]), MAX_CMD_LEN)
-        return f"Run command: {cmd}"
+        return f"Shell: {cmd}"
+
+    if event == "os.exec":
+        exe = args[0] if args else "?"
+        return f"Exec: {exe}"
+
+    if event == "os.spawn":
+        exe = args[1] if len(args) > 1 else "?"
+        return f"Spawn: {exe}"
+
+    if event == "os.posix_spawn":
+        exe = args[0] if args else "?"
+        return f"Posix spawn: {exe}"
+
+    if event == "ctypes.dlopen":
+        lib = args[0] if args else "?"
+        return f"Load library: {lib}"
 
     return f"{event}: {args}"
 
@@ -85,6 +101,19 @@ def extract_decision_details(event: str, args: tuple) -> dict:
     elif event == "subprocess.Popen":
         cmd_args = args[1] if len(args) > 1 else []
         details["command"] = _build_command(args[0], cmd_args)
+        details["executable"] = str(args[0]) if args[0] else ""
+
+    elif event == "os.exec":
+        details["executable"] = str(args[0]) if args else ""
+
+    elif event == "os.spawn":
+        details["executable"] = str(args[1]) if len(args) > 1 else ""
+
+    elif event == "os.posix_spawn":
+        details["executable"] = str(args[0]) if args else ""
+
+    elif event == "ctypes.dlopen":
+        details["library"] = str(args[0]) if args else ""
 
     elif event in ("os.putenv", "os.unsetenv"):
         details["key"] = str(args[0])

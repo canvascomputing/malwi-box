@@ -121,7 +121,7 @@ class TestFormatEvent:
         from malwi_box.cli import _format_event
 
         result = _format_event("subprocess.Popen", ("/bin/ls", ["-la", "/tmp"], None, None))
-        assert result == "Run command: /bin/ls -la /tmp"
+        assert result == "Execute: /bin/ls -la /tmp"
 
     def test_format_subprocess_truncates_long_commands(self):
         """Test that long commands are truncated."""
@@ -130,14 +130,14 @@ class TestFormatEvent:
         long_args = ["arg"] * 50
         result = _format_event("subprocess.Popen", ("/bin/cmd", long_args, None, None))
         assert "..." in result
-        assert len(result) <= 95  # "Run command: " prefix + truncated command
+        assert len(result) <= 95  # "Execute: " prefix + truncated command
 
     def test_format_os_system(self):
         """Test formatting of os.system events."""
         from malwi_box.cli import _format_event
 
         result = _format_event("os.system", ("ls -la",))
-        assert result == "Run command: ls -la"
+        assert result == "Shell: ls -la"
 
     def test_format_unknown_event_fallback(self):
         """Test fallback for unknown events."""

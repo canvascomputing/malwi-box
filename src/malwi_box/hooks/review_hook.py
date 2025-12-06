@@ -10,6 +10,9 @@ import sys
 
 BLOCKLIST = {"builtins.input", "builtins.input/result"}
 
+# Events that replace the current process - atexit handlers won't run
+PROCESS_REPLACING_EVENTS = frozenset({"os.exec", "os.posix_spawn"})
+
 
 def setup_hook(engine=None):
     """Set up the review hook.
@@ -66,6 +69,10 @@ def setup_hook(engine=None):
             session_allowed.add(key)
             details = extract_decision_details(event, args)
             engine.record_decision(event, args, allowed=True, details=details)
+
+            # Process-replacing events need immediate save (atexit won't run)
+            if event in PROCESS_REPLACING_EVENTS:
+                engine.save_decisions()
         finally:
             in_hook = False
 

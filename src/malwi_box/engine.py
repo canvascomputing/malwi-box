@@ -20,6 +20,18 @@ PYPI_HOSTS = frozenset({
     "test.pypi.org",
 })
 
+# Events that can execute native binaries or load shared libraries
+EXEC_EVENTS = frozenset({
+    "subprocess.Popen",
+    "os.exec",
+    "os.spawn",
+    "os.posix_spawn",
+    "ctypes.dlopen",
+})
+
+# Events that run shell commands (checked against allow_shell_commands)
+SHELL_EVENTS = frozenset({"subprocess.Popen", "os.system"})
+
 
 class BoxEngine:
     """Permission engine for audit event enforcement.
@@ -57,7 +69,8 @@ class BoxEngine:
             "allow_env_var_writes": [],
             "allow_pypi_requests": True,
             "allow_domains": [],
-            "allow_system_commands": [],
+            "allow_executables": [],  # Block all by default, use ["*"] to allow all
+            "allow_shell_commands": [],  # Block all by default, use ["*"] to allow all
         }
 
     def _load_config(self) -> dict[str, Any]:
@@ -174,6 +187,17 @@ class BoxEngine:
         except OSError:
             return False
 
+    def _compute_file_hash(self, path: Path) -> str | None:
+        """Compute SHA256 hash of a file.
+
+        Returns hash in format "sha256:<hexdigest>" or None if file can't be read.
+        """
+        try:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            return f"sha256:{digest}"
+        except OSError:
+            return None
+
     def _check_path_in_list(
         self, path: Path, entries: list, check_hash: bool = False
     ) -> bool:
@@ -187,8 +211,18 @@ class BoxEngine:
         Returns:
             True if path is allowed.
         """
+        path_str = str(path)
         for entry in entries:
             entry_path, entry_hash = self._normalize_entry(entry)
+
+            # Handle glob patterns (e.g., "*", "/usr/bin/*", "$PWD/.venv/bin/*")
+            if "*" in entry_path or "?" in entry_path:
+                expanded = self._expand_path_variables(entry_path)
+                if fnmatch.fnmatch(path_str, expanded):
+                    # Glob matches don't support hash verification
+                    return True
+                continue
+
             resolved_entry = self._resolve_path(entry_path)
 
             if path == resolved_entry:
@@ -202,16 +236,19 @@ class BoxEngine:
 
         Args:
             path: Resolved absolute path to check.
-            dirs: List of directory paths.
+            dirs: List of directory paths (strings or dicts with 'path' key).
 
         Returns:
-            True if path is within any allowed directory.
+            True if path is within any allowed directory (not equal to).
         """
         for dir_entry in dirs:
-            dir_path = self._resolve_path(dir_entry)
+            entry_path, _ = self._normalize_entry(dir_entry)
+            dir_path = self._resolve_path(entry_path)
             try:
-                path.relative_to(dir_path)
-                return True
+                rel = path.relative_to(dir_path)
+                # Only allow if path is INSIDE the directory, not equal to it
+                if rel != Path("."):
+                    return True
             except ValueError:
                 continue
         return False
@@ -289,8 +326,69 @@ class BoxEngine:
         allowed = self.config.get("allow_env_var_writes", [])
         return key in allowed
 
-    def _check_system_command(self, event: str, args: tuple) -> bool:
-        """Check system command execution permission."""
+    def _extract_executable(self, event: str, args: tuple) -> str | None:
+        """Extract executable path from various execution events.
+
+        Returns None if no executable can be determined (e.g., os.system).
+        """
+        if not args:
+            return None
+
+        if event == "subprocess.Popen":
+            return str(args[0]) if args[0] else None
+        elif event == "os.exec":
+            # os.exec: (path, args, env)
+            return str(args[0]) if args[0] else None
+        elif event == "os.spawn":
+            # os.spawn: (mode, path, args, env)
+            return str(args[1]) if len(args) > 1 and args[1] else None
+        elif event == "os.posix_spawn":
+            # os.posix_spawn: (path, argv, env)
+            return str(args[0]) if args[0] else None
+        elif event == "ctypes.dlopen":
+            # ctypes.dlopen: (name,)
+            return str(args[0]) if args[0] else None
+
+        return None
+
+    def _resolve_executable(self, executable: str) -> Path | None:
+        """Resolve executable to absolute path, searching PATH if needed."""
+        import shutil
+
+        # If already absolute, just resolve
+        if os.path.isabs(executable):
+            return Path(executable).resolve()
+
+        # Search PATH
+        found = shutil.which(executable)
+        if found:
+            return Path(found).resolve()
+
+        # Try relative to workdir
+        rel_path = self.workdir / executable
+        if rel_path.exists():
+            return rel_path.resolve()
+
+        return None
+
+    def _check_executable(self, event: str, args: tuple) -> bool:
+        """Check if executing a binary is permitted."""
+        executable = self._extract_executable(event, args)
+        if executable is None:
+            return True  # Can't determine executable, allow
+
+        allow_list = self.config.get("allow_executables", [])
+        if not allow_list:
+            return False  # Empty list = block all executables
+
+        exe_path = self._resolve_executable(executable)
+        if exe_path is None:
+            return False  # Can't resolve = block
+
+        return self._check_path_permission(exe_path, allow_list, check_hash=True)
+
+    def _check_shell_command(self, event: str, args: tuple) -> bool:
+        """Check shell command execution permission."""
         if not args:
             return True
 
@@ -310,7 +408,7 @@ class BoxEngine:
             return True
 
         # Check against allowed patterns using glob matching
-        for pattern in self.config.get("allow_system_commands", []):
+        for pattern in self.config.get("allow_shell_commands", []):
             if fnmatch.fnmatch(command, pattern):
                 return True
         return False
@@ -391,8 +489,17 @@ class BoxEngine:
             return self._check_env_write(args)
         elif event in ("os.getenv", "os.environ.get"):
             return self._check_env_read(args)
-        elif event in ("subprocess.Popen", "os.system"):
-            return self._check_system_command(event, args)
+        elif event in EXEC_EVENTS:
+            # Check binary execution permission first
+            if not self._check_executable(event, args):
+                return False
+            # Also check shell command patterns for subprocess.Popen
+            if event in SHELL_EVENTS:
+                return self._check_shell_command(event, args)
+            return True
+        elif event == "os.system":
+            # os.system only checks shell commands (no binary path to verify)
+            return self._check_shell_command(event, args)
         elif event in ("socket.getaddrinfo", "socket.gethostbyname"):
             return self._check_domain(args, event)
 
@@ -423,6 +530,26 @@ class BoxEngine:
             "details": details or {},
         }
         self._decisions.append(decision)
+
+    def _entry_exists(self, entries: list, path: str) -> bool:
+        """Check if path already exists in allow list."""
+        for e in entries:
+            if isinstance(e, str) and e == path:
+                return True
+            if isinstance(e, dict) and e.get("path") == path:
+                return True
+        return False
+
+    def _build_executable_entry(
+        self, path_var: str, resolved: Path | None
+    ) -> str | dict:
+        """Build config entry for executable, with hash if available."""
+        if not resolved or not resolved.exists():
+            return path_var
+        file_hash = self._compute_file_hash(resolved)
+        if not file_hash:
+            return path_var
+        return {"path": path_var, "hash": file_hash}
 
     def save_decisions(self) -> None:
         """Merge recorded decisions into config file."""
@@ -467,10 +594,25 @@ class BoxEngine:
                 if path not in config.get(key, []):
                     config.setdefault(key, []).append(path)
 
-            elif event in ("subprocess.Popen", "os.system"):
+            elif event in EXEC_EVENTS:
+                exe = details.get("executable") or details.get("library")
+                if exe:
+                    exe_path = self._resolve_executable(exe)
+                    exe_var = self._path_to_variable(exe)
+                    existing = config.get("allow_executables", [])
+                    if not self._entry_exists(existing, exe_var):
+                        entry = self._build_executable_entry(exe_var, exe_path)
+                        config.setdefault("allow_executables", []).append(entry)
+                # Also save shell command for subprocess.Popen
+                if event == "subprocess.Popen":
+                    cmd = details.get("command")
+                    if cmd and cmd not in config.get("allow_shell_commands", []):
+                        config.setdefault("allow_shell_commands", []).append(cmd)
+
+            elif event == "os.system":
                 cmd = details.get("command")
-                if cmd and cmd not in config.get("allow_system_commands", []):
-                    config.setdefault("allow_system_commands", []).append(cmd)
+                if cmd and cmd not in config.get("allow_shell_commands", []):
+                    config.setdefault("allow_shell_commands", []).append(cmd)
 
             elif event in ("os.putenv", "os.unsetenv"):
                 key = details.get("key")
