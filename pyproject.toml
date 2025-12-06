@@ -1,6 +1,6 @@
 [project]
 name = "malwi-box"
-version = "0.1.0"
+version = "0.0.2"
 description = "Intercept, audit, and block critical Python operations at runtime"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -15,7 +15,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Security",
 ]
-dependencies = []
+dependencies = ["pip"]
 
 [project.urls]
 Homepage = "https://github.com/canvascomputing/malwi-box"

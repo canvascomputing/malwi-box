@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <em>Shipped without any dependencies</em>
+  <em>Shipped without any dependencies, except pip</em>
 </p>
 
 ## Use Cases

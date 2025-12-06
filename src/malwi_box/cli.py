@@ -96,11 +96,7 @@ def install_command(args: argparse.Namespace) -> int:
     if pip_args is None:
         return 1
 
-    try:
-        from pip._internal.cli.main import main as pip_main
-    except ImportError:
-        print("Error: pip is not installed", file=sys.stderr)
-        return 1
+    from pip._internal.cli.main import main as pip_main
 
     from malwi_box.engine import BoxEngine
     from malwi_box.hooks import review_hook, run_hook
