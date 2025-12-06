@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Python audit hook sandbox with C++ extension"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["pyyaml>=6.0"]
 
 [project.scripts]
 malwi-box = "malwi_box.cli:main"

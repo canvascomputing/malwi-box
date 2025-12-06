@@ -1,6 +1,12 @@
-# malwi-box
+<p align="center">
+  <img src="malwi-box.png" alt="malwi-box logo" width="200">
+</p>
 
-Intercept, audit, and block critical Python operations at runtime.
+<h1 align="center">malwi-box</h1>
+
+<p align="center">
+  <em>Intercept, audit, and block critical Python operations at runtime.</em>
+</p>
 
 ## Use Cases
 
@@ -26,72 +32,157 @@ malwi-box run --review script.py
 malwi-box install requests
 ```
 
-## Configuration
-
-Config file: `.malwi-box` (JSON)
-
-```json
-{
-  "allow_read": ["$PWD", "$PYTHON_STDLIB", "$PYTHON_SITE_PACKAGES"],
-  "allow_create": ["$PWD"],
-  "allow_modify": [],
-  "allow_delete": [],
-  "allow_domains": ["pypi.org", "files.pythonhosted.org"],
-  "allow_ips": [],
-  "allow_executables": [],
-  "allow_shell_commands": []
-}
-```
-
-### Path Variables
-- `$PWD` - Working directory
-- `$HOME` - User home
-- `$TMPDIR` - Temp directory
-- `$PYTHON_STDLIB` - Python standard library
-- `$PYTHON_SITE_PACKAGES` - Installed packages
-
-### Network
-- Domains in `allow_domains` automatically permit their resolved IPs
-- Direct IP access requires explicit `allow_ips` entries (CIDR supported)
-
-### Executables
-Entries can include SHA256 hashes for verification:
-```json
-{
-  "allow_executables": [
-    {"path": "/usr/bin/git", "hash": "sha256:abc123..."}
-  ]
-}
-```
-
 ## Examples
 
 ### Analyze a suspicious package
 ```bash
-# Create restrictive config
 malwi-box config create
-# Install with review - see exactly what it does
 malwi-box install --review sketchy-package
 ```
 
-### Run untrusted script with network restrictions
+### Build script with no network access
 ```bash
-# Only allow specific API
-cat > .malwi-box << 'EOF'
-{
-  "allow_read": ["$PWD", "$PYTHON_STDLIB", "$PYTHON_SITE_PACKAGES"],
-  "allow_domains": ["api.example.com"],
-  "allow_create": ["$PWD/output"]
-}
+cat > .malwi-box.yaml << 'EOF'
+allow_read:
+  - $PWD
+  - $PYTHON_STDLIB
+  - $PYTHON_SITE_PACKAGES
+allow_create:
+  - $PWD/dist
+  - $PWD/build
+allow_modify:
+  - $PWD/dist
+  - $PWD/build
+allow_domains: []
+allow_executables:
+  - $PWD/.venv/bin/*
 EOF
-malwi-box run untrusted_script.py
+malwi-box run build.py
+```
+
+### API client with single allowed endpoint
+```bash
+cat > .malwi-box.yaml << 'EOF'
+allow_read:
+  - $PWD
+  - $PYTHON_STDLIB
+  - $PYTHON_SITE_PACKAGES
+allow_domains:
+  - api.example.com:443
+allow_create:
+  - $PWD/data
+EOF
+malwi-box run fetch_data.py
 ```
 
 ### Audit existing application
 ```bash
 # Review mode shows all operations, you approve/deny each
 malwi-box run --review myapp.py
-# Approved operations are saved to .malwi-box for future runs
+# Approved operations are saved to .malwi-box.yaml for future runs
+```
+
+### Run git commands only
+```bash
+cat > .malwi-box.yaml << 'EOF'
+allow_read:
+  - $PWD
+  - $PYTHON_STDLIB
+  - $PYTHON_SITE_PACKAGES
+  - $HOME/.gitconfig
+allow_create:
+  - $PWD
+allow_modify:
+  - $PWD
+allow_domains:
+  - github.com
+  - gitlab.com
+allow_executables:
+  - path: /usr/bin/git
+    hash: sha256:...  # pin to specific binary
+allow_shell_commands:
+  - /usr/bin/git *
+EOF
+malwi-box run git_automation.py
+```
+
+## Configuration Reference
+
+Config file: `.malwi-box.yaml`
+
+```yaml
+# File access permissions
+allow_read:
+  - $PWD                      # working directory
+  - $PYTHON_STDLIB            # Python standard library
+  - $PYTHON_SITE_PACKAGES     # installed packages
+  - $HOME/.config/myapp       # specific config directory
+  - /etc/hosts                # specific file
+
+allow_create:
+  - $PWD                      # allow creating files in workdir
+  - $TMPDIR                   # allow temp files
+
+allow_modify:
+  - $PWD/data                 # only modify files in data/
+  - path: /etc/myapp.conf     # modify specific file
+    hash: sha256:abc123...    # only if hash matches
+
+allow_delete: []              # no deletions allowed
+
+# Network permissions
+allow_domains:
+  - pypi.org                  # allow any port
+  - files.pythonhosted.org
+  - api.example.com:443       # restrict to specific port
+
+allow_ips:
+  - 10.0.0.0/8                # CIDR notation
+  - 192.168.1.100:8080        # specific IP:port
+  - "[::1]:443"               # IPv6 with port
+
+# Process execution
+allow_executables:
+  - /usr/bin/git              # allow by path
+  - $PWD/.venv/bin/*          # glob pattern
+  - path: /usr/bin/curl       # with hash verification
+    hash: sha256:abc123...
+
+allow_shell_commands:
+  - /usr/bin/git *            # glob pattern matching
+  - /usr/bin/curl *
+
+# Environment variables
+allow_env_var_reads: []       # restrict env access
+allow_env_var_writes:
+  - PATH
+  - PYTHONPATH
+```
+
+### Path Variables
+| Variable | Description |
+|----------|-------------|
+| `$PWD` | Working directory |
+| `$HOME` | User home directory |
+| `$TMPDIR` | System temp directory |
+| `$PYTHON_STDLIB` | Python standard library |
+| `$PYTHON_SITE_PACKAGES` | Installed packages |
+| `$PYTHON_PLATLIB` | Platform-specific packages |
+| `$PYTHON_PREFIX` | Python installation prefix |
+| `$ENV{VAR}` | Any environment variable |
+
+### Network Behavior
+- Domains in `allow_domains` automatically permit their resolved IPs
+- Direct IP access requires explicit `allow_ips` entries
+- CIDR notation supported for IP ranges
+- Port restrictions supported for both domains and IPs
+
+### Hash Verification
+Executables and files can include SHA256 hashes:
+```yaml
+allow_executables:
+  - path: /usr/bin/git
+    hash: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 ```
 
 ## How It Works

@@ -74,14 +74,22 @@ class TestConfigCreate:
             cwd=tmp_path,
         )
         assert result.returncode == 0
-        assert (tmp_path / ".malwi-box").exists()
+        assert (tmp_path / ".malwi-box.yaml").exists()
         assert "Created" in result.stdout
 
     def test_config_create_custom_path(self, tmp_path):
         """Test creating config at custom path."""
-        custom = tmp_path / "custom.json"
+        custom = tmp_path / "custom.yaml"
         result = subprocess.run(
-            [sys.executable, "-m", "malwi_box.cli", "config", "create", "--path", str(custom)],
+            [
+                sys.executable,
+                "-m",
+                "malwi_box.cli",
+                "config",
+                "create",
+                "--path",
+                str(custom),
+            ],
             capture_output=True,
             text=True,
         )
@@ -90,8 +98,8 @@ class TestConfigCreate:
 
     def test_config_create_refuses_overwrite(self, tmp_path):
         """Test that config create refuses to overwrite existing file."""
-        config = tmp_path / ".malwi-box"
-        config.write_text("{}")
+        config = tmp_path / ".malwi-box.yaml"
+        config.write_text("allow_read: []")
         result = subprocess.run(
             [sys.executable, "-m", "malwi_box.cli", "config", "create"],
             capture_output=True,
@@ -170,7 +178,8 @@ class TestFormatEvent:
         """Test formatting of subprocess events."""
         from malwi_box.cli import _format_event
 
-        result = _format_event("subprocess.Popen", ("/bin/ls", ["-la", "/tmp"], None, None))
+        args = ("/bin/ls", ["-la", "/tmp"], None, None)
+        result = _format_event("subprocess.Popen", args)
         assert result == "Execute: /bin/ls -la /tmp"
 
     def test_format_subprocess_truncates_long_commands(self):
@@ -215,8 +224,8 @@ except SystemExit:
 print("done")
 """)
         # Create empty config to ensure /etc/passwd is not allowed
-        config = tmp_path / ".malwi-box"
-        config.write_text('{"allow_read": [], "allow_domains": []}')
+        config = tmp_path / ".malwi-box.yaml"
+        config.write_text("allow_read: []\nallow_domains: []")
 
         # Run with review mode, deny the request
         result = subprocess.run(

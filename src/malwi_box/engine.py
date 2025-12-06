@@ -5,12 +5,13 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import ipaddress
-import json
 import os
 import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+import yaml
 
 # PyPI-related domains for default allow_domains
 PYPI_DOMAINS = [
@@ -19,13 +20,15 @@ PYPI_DOMAINS = [
 ]
 
 # Events that can execute native binaries or load shared libraries
-EXEC_EVENTS = frozenset({
-    "subprocess.Popen",
-    "os.exec",
-    "os.spawn",
-    "os.posix_spawn",
-    "ctypes.dlopen",
-})
+EXEC_EVENTS = frozenset(
+    {
+        "subprocess.Popen",
+        "os.exec",
+        "os.spawn",
+        "os.posix_spawn",
+        "ctypes.dlopen",
+    }
+)
 
 # Events that run shell commands (checked against allow_shell_commands)
 SHELL_EVENTS = frozenset({"subprocess.Popen", "os.system"})
@@ -34,16 +37,18 @@ SHELL_EVENTS = frozenset({"subprocess.Popen", "os.system"})
 class BoxEngine:
     """Permission engine for audit event enforcement.
 
-    Reads configuration from a JSON file and enforces fine-grained
+    Reads configuration from a YAML file and enforces fine-grained
     permissions for file access, environment variables, subprocess
     execution, and network requests.
     """
 
-    def __init__(self, config_path: str = ".malwi-box", workdir: str | None = None):
+    def __init__(
+        self, config_path: str = ".malwi-box.yaml", workdir: str | None = None
+    ):
         """Initialize the BoxEngine.
 
         Args:
-            config_path: Path to the JSON configuration file.
+            config_path: Path to the YAML configuration file.
             workdir: Working directory for relative paths. Defaults to cwd.
         """
         self.config_path = Path(config_path)
@@ -70,22 +75,22 @@ class BoxEngine:
             "allow_domains": PYPI_DOMAINS.copy(),
             "allow_executables": [],  # Block all by default, use ["*"] to allow all
             "allow_shell_commands": [],  # Block all by default, use ["*"] to allow all
-            "allow_ips": [],  # CIDR notation supported, e.g. ["10.0.0.0/8", "192.168.1.100"]
+            "allow_ips": [],  # CIDR notation supported
         }
 
     def _load_config(self) -> dict[str, Any]:
-        """Load config from JSON file or return defaults."""
+        """Load config from YAML file or return defaults."""
         if self.config_path.exists():
             try:
                 with open(self.config_path) as f:
-                    config = json.load(f)
+                    config = yaml.safe_load(f) or {}
                 # Merge with defaults for any missing keys
                 defaults = self._default_config()
                 for key, value in defaults.items():
                     if key not in config:
                         config[key] = value
                 return config
-            except (json.JSONDecodeError, OSError) as e:
+            except (yaml.YAMLError, OSError) as e:
                 sys.stderr.write(f"[malwi-box] Warning: Could not load config: {e}\n")
                 return self._default_config()
         return self._default_config()
@@ -482,10 +487,8 @@ class BoxEngine:
         try:
             import socket
 
-            results = socket.getaddrinfo(
-                domain, port or 443, proto=socket.IPPROTO_TCP
-            )
-            for family, type_, proto, canonname, sockaddr in results:
+            results = socket.getaddrinfo(domain, port or 443, proto=socket.IPPROTO_TCP)
+            for _family, _type, _proto, _canonname, sockaddr in results:
                 self._resolved_ips.add(sockaddr[0])
         except socket.gaierror:
             pass  # DNS resolution failed, nothing to cache
@@ -674,8 +677,8 @@ class BoxEngine:
         if self.config_path.exists():
             try:
                 with open(self.config_path) as f:
-                    config = json.load(f)
-            except (json.JSONDecodeError, OSError):
+                    config = yaml.safe_load(f) or {}
+            except (yaml.YAMLError, OSError):
                 config = self._default_config()
         else:
             config = self._default_config()
@@ -745,7 +748,7 @@ class BoxEngine:
         # Write updated config
         try:
             with open(self.config_path, "w") as f:
-                json.dump(config, f, indent=2)
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
         except OSError as e:
             sys.stderr.write(f"[malwi-box] Warning: Could not save config: {e}\n")
 
@@ -777,8 +780,6 @@ class BoxEngine:
                 if enforce:
                     self._violation(f"{event}:{args}")
                 else:
-                    sys.stderr.write(
-                        f"[malwi-box] WOULD BLOCK: {event}: {args}\n"
-                    )
+                    sys.stderr.write(f"[malwi-box] WOULD BLOCK: {event}: {args}\n")
 
         return hook

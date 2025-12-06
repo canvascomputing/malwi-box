@@ -20,32 +20,38 @@ RESET = "\033[0m"
 PROCESS_REPLACING_EVENTS = frozenset({"os.exec", "os.posix_spawn"})
 
 # DNS resolution events - need to cache IPs when approved
-DNS_EVENTS = frozenset({
-    "socket.getaddrinfo",
-    "socket.gethostbyname",
-    "socket.gethostbyname_ex",
-    "socket.gethostbyaddr",
-})
+DNS_EVENTS = frozenset(
+    {
+        "socket.getaddrinfo",
+        "socket.gethostbyname",
+        "socket.gethostbyname_ex",
+        "socket.gethostbyaddr",
+    }
+)
 
 # Event criticality classification
-CRITICAL_EVENTS = frozenset({
-    "socket.getaddrinfo",
-    "socket.gethostbyname",
-    "socket.gethostbyname_ex",
-    "socket.gethostbyaddr",
-    "socket.connect",
-    "subprocess.Popen",
-    "os.exec",
-    "os.spawn",
-    "os.posix_spawn",
-    "os.system",
-    "ctypes.dlopen",
-})
+CRITICAL_EVENTS = frozenset(
+    {
+        "socket.getaddrinfo",
+        "socket.gethostbyname",
+        "socket.gethostbyname_ex",
+        "socket.gethostbyaddr",
+        "socket.connect",
+        "subprocess.Popen",
+        "os.exec",
+        "os.spawn",
+        "os.posix_spawn",
+        "os.system",
+        "ctypes.dlopen",
+    }
+)
 
-WARNING_EVENTS = frozenset({
-    "os.putenv",
-    "os.unsetenv",
-})
+WARNING_EVENTS = frozenset(
+    {
+        "os.putenv",
+        "os.unsetenv",
+    }
+)
 
 
 def get_event_color(event: str, args: tuple) -> str:

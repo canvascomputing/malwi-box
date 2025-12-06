@@ -16,7 +16,7 @@ def _decode(value) -> str:
 def _truncate(s: str, max_len: int) -> str:
     """Truncate string with ellipsis if too long."""
     if len(s) > max_len:
-        return s[:max_len - 3] + "..."
+        return s[: max_len - 3] + "..."
     return s
 
 
@@ -136,10 +136,11 @@ def extract_decision_details(event: str, args: tuple) -> dict:
         if len(args) > 1 and args[1] is not None:
             details["port"] = args[1]
 
-    elif event == "socket.gethostbyname":
-        details["domain"] = str(args[0])
-
-    elif event in ("socket.gethostbyname_ex", "socket.gethostbyaddr"):
+    elif event in (
+        "socket.gethostbyname",
+        "socket.gethostbyname_ex",
+        "socket.gethostbyaddr",
+    ):
         details["domain"] = str(args[0])
 
     elif event == "socket.connect":

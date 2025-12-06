@@ -44,5 +44,3 @@ def set_event_blocklist(blocklist: Iterable[str] | None) -> None:
         set_blocklist(None)
     else:
         set_blocklist(list(blocklist))
-
-

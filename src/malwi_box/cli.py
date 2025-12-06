@@ -96,12 +96,13 @@ def install_command(args: argparse.Namespace) -> int:
         run_hook.setup_hook(engine)
 
     from pip._internal.cli.main import main as pip_main
+
     return pip_main(pip_args)
 
 
 def config_create_command(args: argparse.Namespace) -> int:
     """Create a default config file."""
-    import json
+    import yaml
 
     from malwi_box.engine import BoxEngine
 
@@ -114,7 +115,7 @@ def config_create_command(args: argparse.Namespace) -> int:
     config = engine._default_config()
 
     with open(path, "w") as f:
-        json.dump(config, f, indent=2)
+        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
     print(f"Created {path}")
     return 0
@@ -159,7 +160,8 @@ def main() -> int:
         help="Package version to install",
     )
     install_parser.add_argument(
-        "-r", "--requirements",
+        "-r",
+        "--requirements",
         dest="requirements",
         help="Install from requirements file",
     )
@@ -179,8 +181,8 @@ def main() -> int:
     )
     create_parser.add_argument(
         "--path",
-        default=".malwi-box",
-        help="Path to config file (default: .malwi-box)",
+        default=".malwi-box.yaml",
+        help="Path to config file (default: .malwi-box.yaml)",
     )
 
     args = parser.parse_args()
@@ -189,9 +191,8 @@ def main() -> int:
         return run_command(args)
     elif args.subcommand == "install":
         return install_command(args)
-    elif args.subcommand == "config":
-        if args.config_subcommand == "create":
-            return config_create_command(args)
+    elif args.subcommand == "config" and args.config_subcommand == "create":
+        return config_create_command(args)
 
     return 1
 

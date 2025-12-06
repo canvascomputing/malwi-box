@@ -82,7 +82,9 @@ print(f"Result: {x}")
 """
         exit_code, stdout, stderr = run_sandboxed_code(code)
 
-        assert exit_code == 0, f"Expected exit code 0, got {exit_code}. stderr: {stderr}"
+        assert exit_code == 0, (
+            f"Expected exit code 0, got {exit_code}. stderr: {stderr}"
+        )
         assert "Hello from sandbox" in stdout
         assert "Result: 3" in stdout
 

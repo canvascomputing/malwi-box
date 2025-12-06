@@ -12,7 +12,7 @@ with open(__file__) as f:
     print(f"This script has {lines} lines")
 
 # Import (triggers 'import' event)
-import json
+import json  # noqa: E402
 
 data = json.dumps({"message": "Hello from JSON"})
 print(f"JSON: {data}")
