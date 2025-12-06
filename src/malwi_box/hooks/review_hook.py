@@ -11,16 +11,17 @@ import sys
 BLOCKLIST = {"builtins.input", "builtins.input/result"}
 
 
-def setup_hook():
-    """Set up the review hook. Called automatically when used as sitecustomize."""
-    try:
-        from malwi_box import extract_decision_details, format_event, install_hook
-        from malwi_box.engine import BoxEngine
-    except ImportError as e:
-        print(f"[malwi-box] Warning: Could not import malwi_box: {e}", file=sys.stderr)
-        return
+def setup_hook(engine=None):
+    """Set up the review hook.
 
-    engine = BoxEngine()
+    Args:
+        engine: BoxEngine instance. If None, creates a new one.
+    """
+    from malwi_box import extract_decision_details, format_event, install_hook
+    from malwi_box.engine import BoxEngine
+
+    if engine is None:
+        engine = BoxEngine()
     session_allowed: set[tuple] = set()
     in_hook = False  # Recursion guard
 

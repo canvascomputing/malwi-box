@@ -63,28 +63,8 @@ def run_command(args: argparse.Namespace) -> int:
     return _run_with_hook(command, template)
 
 
-def _ensure_pip() -> bool:
-    """Ensure pip is available, installing via ensurepip if needed."""
-    try:
-        import pip  # noqa: F401
-        return True
-    except ImportError:
-        pass
-
-    try:
-        import ensurepip
-        ensurepip.bootstrap(upgrade=True)
-        return True
-    except Exception as e:
-        print(f"Error: Could not install pip: {e}", file=sys.stderr)
-        return False
-
-
-def install_command(args: argparse.Namespace) -> int:
-    """Install package(s) with sandboxing using pip's Python API."""
-    if not _ensure_pip():
-        return 1
-
+def _build_pip_args(args: argparse.Namespace) -> list[str] | None:
+    """Build pip install arguments from CLI args. Returns None on error."""
     pip_args = ["install"]
     if args.requirements:
         pip_args.extend(["-r", args.requirements])
@@ -95,80 +75,25 @@ def install_command(args: argparse.Namespace) -> int:
             pip_args.append(args.package)
     else:
         print("Error: Must specify package or -r/--requirements", file=sys.stderr)
+        return None
+    return pip_args
+
+
+def install_command(args: argparse.Namespace) -> int:
+    """Install package(s) with sandboxing using pip's Python API."""
+    pip_args = _build_pip_args(args)
+    if pip_args is None:
         return 1
 
-    from malwi_box import extract_decision_details, format_event, install_hook
     from malwi_box.engine import BoxEngine
+    from malwi_box.hooks import review_hook, run_hook
 
     engine = BoxEngine()
 
     if args.review:
-        import atexit
-
-        atexit.register(engine.save_decisions)
-        session_allowed: set[tuple] = set()
-        in_hook = False  # Recursion guard
-
-        def make_hashable(obj):
-            """Convert an object to a hashable form."""
-            if isinstance(obj, (list, tuple)):
-                return tuple(make_hashable(item) for item in obj)
-            if isinstance(obj, dict):
-                return tuple(sorted((k, make_hashable(v)) for k, v in obj.items()))
-            return obj
-
-        def review_hook(event, hook_args):
-            nonlocal in_hook
-            if in_hook:
-                return  # Prevent recursion
-
-            # Check if already approved this session
-            key = (event, make_hashable(hook_args))
-            if key in session_allowed:
-                return
-
-            in_hook = True
-            try:
-                if engine.check_permission(event, hook_args):
-                    return
-
-                print(f"[AUDIT] {format_event(event, hook_args)}", file=sys.stderr)
-                try:
-                    response = input("Allow? [Y/n]: ").strip().lower()
-                except (EOFError, KeyboardInterrupt):
-                    print("\nAborted.", file=sys.stderr)
-                    engine.save_decisions()
-                    sys.exit(130)
-                if response == "n":
-                    print("Denied. Terminating.", file=sys.stderr)
-                    engine.save_decisions()
-                    sys.exit(1)
-
-                session_allowed.add(key)
-                details = extract_decision_details(event, hook_args)
-                engine.record_decision(event, hook_args, allowed=True, details=details)
-            finally:
-                in_hook = False
-
-        install_hook(review_hook, blocklist={"builtins.input", "builtins.input/result"})
+        review_hook.setup_hook(engine)
     else:
-        in_enforce_hook = False  # Recursion guard
-
-        def enforce_hook(event, hook_args):
-            nonlocal in_enforce_hook
-            if in_enforce_hook:
-                return
-
-            in_enforce_hook = True
-            try:
-                if not engine.check_permission(event, hook_args):
-                    msg = f"[malwi-box] BLOCKED: {format_event(event, hook_args)}"
-                    print(msg, file=sys.stderr)
-                    sys.exit(78)
-            finally:
-                in_enforce_hook = False
-
-        install_hook(enforce_hook)
+        run_hook.setup_hook(engine)
 
     from pip._internal.cli.main import main as pip_main
     return pip_main(pip_args)

@@ -8,16 +8,17 @@ import os
 import sys
 
 
-def setup_hook():
-    """Set up the enforcement hook. Called automatically when used as sitecustomize."""
-    try:
-        from malwi_box import format_event, install_hook
-        from malwi_box.engine import BoxEngine
-    except ImportError as e:
-        print(f"[malwi-box] Warning: Could not import malwi_box: {e}", file=sys.stderr)
-        return
+def setup_hook(engine=None):
+    """Set up the enforcement hook.
 
-    engine = BoxEngine()
+    Args:
+        engine: BoxEngine instance. If None, creates a new one.
+    """
+    from malwi_box import format_event, install_hook
+    from malwi_box.engine import BoxEngine
+
+    if engine is None:
+        engine = BoxEngine()
     in_hook = False  # Recursion guard
 
     def hook(event, args):
