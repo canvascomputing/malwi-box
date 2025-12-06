@@ -34,76 +34,58 @@ malwi-box install requests
 
 ## Examples
 
-### Analyze a suspicious package
+### Audit a suspicious package
 ```bash
-malwi-box config create
 malwi-box install --review sketchy-package
 ```
 
-### Build script with no network access
+### Allow network access
 ```bash
-cat > .malwi-box.yaml << 'EOF'
-allow_read:
-  - $PWD
-  - $PYTHON_STDLIB
-  - $PYTHON_SITE_PACKAGES
-allow_create:
-  - $PWD/dist
-  - $PWD/build
-allow_modify:
-  - $PWD/dist
-  - $PWD/build
-allow_domains: []
-allow_executables:
-  - $PWD/.venv/bin/*
-EOF
-malwi-box run build.py
+malwi-box run examples/network_request.py
 ```
-
-### API client with single allowed endpoint
-```bash
-cat > .malwi-box.yaml << 'EOF'
-allow_read:
-  - $PWD
-  - $PYTHON_STDLIB
-  - $PYTHON_SITE_PACKAGES
+`.malwi-box.yaml`:
+```yaml
 allow_domains:
-  - api.example.com:443
-allow_create:
-  - $PWD/data
-EOF
-malwi-box run fetch_data.py
+- httpbin.org
 ```
 
-### Audit existing application
+### Allow file reads
 ```bash
-# Review mode shows all operations, you approve/deny each
-malwi-box run --review myapp.py
-# Approved operations are saved to .malwi-box.yaml for future runs
+malwi-box run examples/file_read.py
 ```
-
-### Run git commands only
-```bash
-cat > .malwi-box.yaml << 'EOF'
+`.malwi-box.yaml`:
+```yaml
 allow_read:
-  - $PWD
-  - $PYTHON_STDLIB
-  - $PYTHON_SITE_PACKAGES
-  - $HOME/.gitconfig
-allow_create:
-  - $PWD
-allow_modify:
-  - $PWD
-allow_domains:
-  - github.com
-  - gitlab.com
-allow_executables:
-  - path: /usr/bin/git
-    hash: sha256:...  # pin to specific binary
+- /etc/passwd
+```
+
+### Allow shell commands
+```bash
+malwi-box run examples/system_command.py
+```
+`.malwi-box.yaml`:
+```yaml
 allow_shell_commands:
-  - /usr/bin/git *
-EOF
-malwi-box run git_automation.py
+- /bin/ls *
+```
+
+### Allow executables
+```bash
+malwi-box run examples/executable_control.py
+```
+`.malwi-box.yaml`:
+```yaml
+allow_executables:
+- /usr/bin/echo
+- path: /usr/bin/git
+  hash: sha256:e3b0c44...
+```
+
+### Review mode
+```bash
+malwi-box run --review examples/network_request.py
+# 'y' to approve, 'n' to deny, 'i' to inspect call stack
+# Approved operations saved to .malwi-box.yaml
 ```
 
 ## Configuration Reference
