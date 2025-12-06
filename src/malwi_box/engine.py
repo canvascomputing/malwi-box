@@ -495,7 +495,9 @@ class BoxEngine:
         # Always block sensitive paths
         if self._is_sensitive_path(path):
             return False
-        return self._check_path_permission(path, self.config.get("allow_read", []))
+        return self._check_path_permission(
+            path, self.config.get("allow_read", []), check_hash=True
+        )
 
     def _check_create_permission(self, path: Path) -> bool:
         """Check if creating a new file is permitted."""
@@ -873,6 +875,15 @@ class BoxEngine:
                 return True
         return False
 
+    def _build_file_entry(self, path_var: str, resolved: Path | None) -> str | dict:
+        """Build config entry for file, with hash if it's a file (not directory)."""
+        if not resolved or not resolved.exists() or resolved.is_dir():
+            return path_var
+        file_hash = self._compute_file_hash(resolved)
+        if not file_hash:
+            return path_var
+        return {"path": path_var, "hash": file_hash}
+
     def _build_executable_entry(
         self, path_var: str, resolved: Path | None
     ) -> str | dict:
@@ -923,9 +934,16 @@ class BoxEngine:
                     key = "allow_read"
 
                 # Convert path to variable if possible for portability
-                path = self._path_to_variable(path)
-                if path not in config.get(key, []):
-                    config.setdefault(key, []).append(path)
+                path_obj = Path(path)
+                path_var = self._path_to_variable(path)
+                existing = config.get(key, [])
+                if not self._entry_exists(existing, path_var):
+                    # Hash for read/modify, plain path for create (file doesn't exist yet)
+                    if key in ("allow_read", "allow_modify"):
+                        entry = self._build_file_entry(path_var, path_obj)
+                    else:
+                        entry = path_var
+                    config.setdefault(key, []).append(entry)
 
             elif event in EXEC_EVENTS:
                 exe = details.get("executable") or details.get("library")
