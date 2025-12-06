@@ -44,6 +44,9 @@ CRITICAL_EVENTS = frozenset(
         "os.posix_spawn",
         "os.system",
         "ctypes.dlopen",
+        "urllib.Request",
+        "http.request",
+        "http.response",
     }
 )
 
@@ -88,12 +91,14 @@ def get_caller_info() -> list[tuple[str, int, str, str]]:
         if "<" in filename:  # e.g., <frozen importlib._bootstrap>
             continue
 
-        result.append((
-            filename,
-            frame_info.lineno,
-            frame_info.function,
-            frame_info.code_context[0].strip() if frame_info.code_context else "",
-        ))
+        result.append(
+            (
+                filename,
+                frame_info.lineno,
+                frame_info.function,
+                frame_info.code_context[0].strip() if frame_info.code_context else "",
+            )
+        )
 
     return result
 
@@ -110,6 +115,7 @@ def setup_hook(engine=None):
 
     if engine is None:
         engine = BoxEngine()
+
     session_allowed: set[tuple] = set()
     in_hook = False  # Recursion guard
 

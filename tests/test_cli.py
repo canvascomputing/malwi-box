@@ -99,7 +99,7 @@ class TestConfigCreate:
     def test_config_create_refuses_overwrite(self, tmp_path):
         """Test that config create refuses to overwrite existing file."""
         config = tmp_path / ".malwi-box.toml"
-        config.write_text('allow_read = []')
+        config.write_text("allow_read = []")
         result = subprocess.run(
             [sys.executable, "-m", "malwi_box.cli", "config", "create"],
             capture_output=True,
@@ -226,7 +226,7 @@ print("done")
 """)
         # Create empty config to ensure /etc/passwd is not allowed
         config = tmp_path / ".malwi-box.toml"
-        config.write_text('allow_read = []\nallow_domains = []')
+        config.write_text("allow_read = []\nallow_domains = []")
 
         # Run with review mode, deny the request
         result = subprocess.run(

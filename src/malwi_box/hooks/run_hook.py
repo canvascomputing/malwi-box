@@ -23,6 +23,7 @@ def setup_hook(engine=None):
 
     if engine is None:
         engine = BoxEngine()
+
     in_hook = False  # Recursion guard
 
     def hook(event, args):

@@ -45,3 +45,4 @@ ENV/
 
 # malwi-box config
 .malwi-box.toml
+.claude/

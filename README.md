@@ -18,7 +18,7 @@
 - 📦 **Dependency auditing** - Discover what file, network, and process access a package actually needs
 - 🔒 **Runtime protection** - Enforce allowlists to block unauthorized operations in production
 
-> **Warning**: This tool is not a sandbox with isolated execution, it runs on your actual machine, kernel and CPU. Use at your own risk.
+> **Warning**: This tool is not executed in isolation or virtualization, it runs on your actual machine, kernel and CPU. Use it at your own risk. Still it allows to reduce the blast radius of typical Python malware.
 
 ## Installation
 
@@ -40,19 +40,19 @@ malwi-box run script.py
 
 ## Commands
 
-### `malwi-box run`
+### run
 
 Run a Python script or module with sandboxing.
 
 ```bash
 malwi-box run script.py [args...]
-malwi-box run --review script.py    # approve/deny each operation
 malwi-box run --force script.py     # log violations without blocking
+malwi-box run --review script.py    # approve/deny each operation
 ```
 
-### `malwi-box install`
+### install
 
-Install pip packages with sandboxing.
+Install pip packages with sandboxing. Most malware packages perform malicious activities at install-time.
 
 ```bash
 malwi-box install package
@@ -61,7 +61,7 @@ malwi-box install -r requirements.txt
 malwi-box install --review package  # approve/deny each operation
 ```
 
-### `malwi-box config`
+### config
 
 Manage configuration.
 
@@ -107,6 +107,21 @@ allow_ips = [
   "10.0.0.0/8",               # CIDR notation
   "192.168.1.100:8080",       # specific IP:port
   "[::1]:443",                # IPv6 with port
+]
+
+# HTTP URL path restrictions (optional, empty = domain-only mode)
+allow_http_urls = [
+  "api.example.com/v1/*",         # glob pattern for paths
+  "cdn.example.com/assets/*",
+  "https://secure.example.com/*", # explicit scheme
+]
+
+# HTTP methods allowed (optional, empty = all methods)
+allow_http_methods = ["GET", "POST", "HEAD"]
+
+# Response payload hash verification (optional)
+allow_http_payload_hashes = [
+  { url = "example.com/file.tar.gz", hash = "sha256:abc123..." },
 ]
 
 # Process execution
@@ -156,6 +171,36 @@ The following paths are automatically blocked even if they match an allow rule:
 - CIDR notation supported for IP ranges
 - Port restrictions supported for both domains and IPs
 
+### HTTP URL Path Allowlisting
+- If `allow_http_urls` is empty, only domain-level checks apply (default behavior)
+- If `allow_http_urls` is configured, requests must match both domain AND URL pattern
+- Scheme (`http://`, `https://`) is optional in patterns - omit to match both
+- Glob patterns supported for paths: `api.example.com/v1/*`
+- Subdomain matching: `example.com/api/*` matches `api.example.com/api/*`
+
+### HTTP Method Restrictions
+- If `allow_http_methods` is empty, all HTTP methods are allowed
+- If configured, only listed methods are permitted (e.g., `["GET", "HEAD"]`)
+
+### Payload Hash Verification
+- Verify downloaded content matches expected SHA256 hash
+- Works with `requests`, `httpx`, `urllib3`, and stdlib `urllib`
+- Configure via `allow_http_payload_hashes` with `{url, hash}` entries
+- URL patterns support globs: `*/releases/*.whl`
+
+Example: restrict API access and verify downloaded artifacts:
+```toml
+allow_domains = ["api.example.com", "releases.example.com"]
+allow_http_urls = [
+  "api.example.com/v1/*",
+  "releases.example.com/artifacts/*",
+]
+allow_http_methods = ["GET", "POST"]
+allow_http_payload_hashes = [
+  { url = "releases.example.com/artifacts/app.tar.gz", hash = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+]
+```
+
 ### Hash Verification
 Executables and files can include SHA256 hashes:
 ```toml
@@ -169,6 +214,7 @@ allow_executables = [
 Uses Python's PEP 578 audit hooks via a C++ extension to intercept:
 - File operations (`open`)
 - Network requests (`socket.connect`, `socket.getaddrinfo`)
+- HTTP requests (`urllib.Request` + library hooks for `requests`, `httpx`, `urllib3`)
 - Process execution (`subprocess.Popen`, `os.exec*`, `os.system`)
 - Library loading (`ctypes.dlopen`)
 

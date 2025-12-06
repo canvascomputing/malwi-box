@@ -184,13 +184,109 @@ static void invoke_audit_callback(const char *event, PyObject *args_tuple) {
     }
 }
 
-// Profile hook function for monitoring env var access
-static int profile_hook(PyObject *obj, PyFrameObject *frame, int what, PyObject *arg) {
-    // Only interested in C function calls
-    if (what != PyTrace_C_CALL) {
-        return 0;
+// Extract URL and method from frame locals and report http.request event
+static void extract_and_report_http_request(PyFrameObject *frame) {
+    PyObject *locals = PyFrame_GetLocals(frame);
+    if (locals == NULL) return;
+
+    PyObject *url = NULL;
+    PyObject *method = NULL;
+
+    // Try common parameter names for URL
+    url = PyDict_GetItemString(locals, "url");
+    if (url == NULL) url = PyDict_GetItemString(locals, "fullurl");
+
+    // Try common parameter names for method
+    method = PyDict_GetItemString(locals, "method");
+
+    // Convert URL object to string if needed (httpx uses URL objects)
+    PyObject *url_str = NULL;
+    if (url != NULL) {
+        if (PyUnicode_Check(url)) {
+            url_str = url;
+            Py_INCREF(url_str);
+        } else {
+            // Try str(url) for URL objects
+            url_str = PyObject_Str(url);
+        }
     }
 
+    if (url_str != NULL) {
+        PyObject *method_str = NULL;
+        int created_method = 0;
+        if (method == NULL) {
+            method_str = PyUnicode_FromString("GET");
+            created_method = 1;
+        } else if (PyUnicode_Check(method)) {
+            method_str = method;
+            Py_INCREF(method_str);
+        } else {
+            method_str = PyObject_Str(method);
+            created_method = 1;
+        }
+
+        if (method_str != NULL) {
+            PyObject *args = PyTuple_Pack(2, url_str, method_str);
+            if (args != NULL) {
+                invoke_audit_callback("http.request", args);
+                Py_DECREF(args);
+            }
+            Py_DECREF(method_str);
+        }
+
+        Py_DECREF(url_str);
+    }
+
+    Py_DECREF(locals);
+}
+
+// Check if current frame is an HTTP request function
+static void check_http_function_call(PyFrameObject *frame) {
+    PyCodeObject *code = PyFrame_GetCode(frame);
+    if (code == NULL) return;
+
+    PyObject *name_obj = code->co_name;
+    PyObject *filename_obj = code->co_filename;
+
+    if (name_obj == NULL || filename_obj == NULL) {
+        Py_DECREF(code);
+        return;
+    }
+
+    const char *func_name = PyUnicode_AsUTF8(name_obj);
+    const char *filename = PyUnicode_AsUTF8(filename_obj);
+
+    if (func_name == NULL || filename == NULL) {
+        Py_DECREF(code);
+        return;
+    }
+
+    // Quick check: only interested in "urlopen" or "request" functions
+    int is_http_func = 0;
+
+    if (streq(func_name, "urlopen")) {
+        // urllib.request.urlopen or urllib3 HTTPConnectionPool.urlopen
+        if (strstr(filename, "urllib/request.py") != NULL ||
+            strstr(filename, "urllib3/connectionpool.py") != NULL) {
+            is_http_func = 1;
+        }
+    } else if (streq(func_name, "request")) {
+        // requests Session.request or httpx Client.request
+        if (strstr(filename, "requests/sessions.py") != NULL ||
+            strstr(filename, "httpx/_client.py") != NULL) {
+            is_http_func = 1;
+        }
+    }
+
+    if (is_http_func) {
+        extract_and_report_http_request(frame);
+    }
+
+    Py_DECREF(code);
+}
+
+// Profile hook function for monitoring env var access and HTTP requests
+static int profile_hook(PyObject *obj, PyFrameObject *frame, int what, PyObject *arg) {
     // Skip if finalizing
     if (Py_IsFinalizing()) {
         return 0;
@@ -202,6 +298,17 @@ static int profile_hook(PyObject *obj, PyFrameObject *frame, int what, PyObject 
 
     AuditHookState *state = get_state(g_module);
     if (state == NULL || !state->profile_registered) {
+        return 0;
+    }
+
+    // Handle Python function calls (PyTrace_CALL) for HTTP interception
+    if (what == PyTrace_CALL) {
+        check_http_function_call(frame);
+        return 0;
+    }
+
+    // Handle C function calls (PyTrace_C_CALL) for env var monitoring
+    if (what != PyTrace_C_CALL) {
         return 0;
     }
 

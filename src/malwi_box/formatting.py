@@ -99,6 +99,24 @@ def format_event(event: str, args: tuple) -> str:
         lib = args[0] if args else "?"
         return f"Load library: {lib}"
 
+    if event == "urllib.Request":
+        url = args[0] if args else "?"
+        method = args[3] if len(args) > 3 and args[3] else None
+        if method is None:
+            # Infer method from data presence
+            data = args[1] if len(args) > 1 else None
+            method = "POST" if data else "GET"
+        return f"HTTP {method}: {_truncate(str(url), MAX_CMD_LEN)}"
+
+    if event == "http.request":
+        url = args[0] if args else "?"
+        method = args[1] if len(args) > 1 else "GET"
+        return f"HTTP {method}: {_truncate(str(url), MAX_CMD_LEN)}"
+
+    if event == "http.response":
+        url = args[0] if args else "?"
+        return f"HTTP Response: {_truncate(str(url), MAX_CMD_LEN)}"
+
     return f"{event}: {args}"
 
 
@@ -156,6 +174,26 @@ def extract_decision_details(event: str, args: tuple) -> dict:
             details["host"] = str(args[1][0])
             if len(args[1]) > 1:
                 details["port"] = args[1][1]
+
+    elif event == "urllib.Request":
+        # args: (url, data, headers, method)
+        details["url"] = str(args[0]) if args else ""
+        if len(args) > 3 and args[3]:
+            details["method"] = str(args[3])
+        else:
+            # Infer method from data presence
+            data = args[1] if len(args) > 1 else None
+            details["method"] = "POST" if data else "GET"
+
+    elif event == "http.request":
+        # args: (url, method)
+        details["url"] = str(args[0]) if args else ""
+        details["method"] = str(args[1]) if len(args) > 1 else "GET"
+
+    elif event == "http.response":
+        # args: (url, hash)
+        details["url"] = str(args[0]) if args else ""
+        details["hash"] = str(args[1]) if len(args) > 1 else ""
 
     return details
 

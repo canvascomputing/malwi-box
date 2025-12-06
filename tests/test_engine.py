@@ -1115,3 +1115,214 @@ class TestDomainIPResolution:
 
         # Verify IPs were cached
         assert len(engine._resolved_ips) > 0
+
+
+class TestURLPermissions:
+    """Tests for URL path allowlisting via urllib.Request event."""
+
+    def test_url_allow_empty_allows_all(self, tmp_path):
+        """Test that empty allow_urls allows all URLs (domain-only mode)."""
+        config = {"allow_urls": []}
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Empty allow_urls = domain-only mode, all URLs allowed at this level
+        assert engine.check_permission(
+            "urllib.Request", ("https://example.com/any/path", None, {}, None)
+        )
+
+    def test_url_block_unmatched_path(self, tmp_path):
+        """Test that URLs not matching allow_urls are blocked."""
+        config = {"allow_http_urls": ["api.example.com/v1/*"]}
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Unmatched path should be blocked
+        assert not engine.check_permission(
+            "urllib.Request", ("https://api.example.com/v2/users", None, {}, None)
+        )
+
+    def test_url_allow_matching_glob_pattern(self, tmp_path):
+        """Test that URLs matching glob pattern in allow_urls are allowed."""
+        config = {"allow_http_urls": ["api.example.com/v1/*"]}
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Matching paths should be allowed
+        assert engine.check_permission(
+            "urllib.Request", ("https://api.example.com/v1/users", None, {}, None)
+        )
+        assert engine.check_permission(
+            "urllib.Request", ("https://api.example.com/v1/orders/123", None, {}, None)
+        )
+
+    def test_url_scheme_optional_in_pattern(self, tmp_path):
+        """Test that patterns without scheme match both http and https."""
+        config = {"allow_http_urls": ["example.com/api/*"]}
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Both http and https should match
+        assert engine.check_permission(
+            "urllib.Request", ("https://example.com/api/test", None, {}, None)
+        )
+        assert engine.check_permission(
+            "urllib.Request", ("http://example.com/api/test", None, {}, None)
+        )
+
+    def test_url_scheme_explicit_in_pattern(self, tmp_path):
+        """Test that pattern with explicit scheme only matches that scheme."""
+        config = {"allow_http_urls": ["https://secure.example.com/*"]}
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # https should match
+        assert engine.check_permission(
+            "urllib.Request", ("https://secure.example.com/data", None, {}, None)
+        )
+        # http should NOT match when pattern specifies https
+        assert not engine.check_permission(
+            "urllib.Request", ("http://secure.example.com/data", None, {}, None)
+        )
+
+    def test_url_subdomain_matching(self, tmp_path):
+        """Test that subdomain matching works in URL patterns."""
+        config = {"allow_http_urls": ["example.com/api/*"]}
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Subdomain should match parent domain pattern
+        assert engine.check_permission(
+            "urllib.Request", ("https://api.example.com/api/v1", None, {}, None)
+        )
+        assert engine.check_permission(
+            "urllib.Request", ("https://www.example.com/api/v1", None, {}, None)
+        )
+
+    def test_url_port_in_pattern(self, tmp_path):
+        """Test that port in pattern is enforced."""
+        config = {"allow_http_urls": ["api.example.com:8080/api/*"]}
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Correct port should match
+        assert engine.check_permission(
+            "urllib.Request",
+            ("https://api.example.com:8080/api/test", None, {}, None),
+        )
+        # Wrong port should NOT match
+        assert not engine.check_permission(
+            "urllib.Request",
+            ("https://api.example.com:443/api/test", None, {}, None),
+        )
+
+    def test_url_exact_path_match(self, tmp_path):
+        """Test exact path matching (no glob)."""
+        config = {"allow_http_urls": ["example.com/health"]}
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Exact match
+        assert engine.check_permission(
+            "urllib.Request", ("https://example.com/health", None, {}, None)
+        )
+        # Not an exact match (extra path segment)
+        assert not engine.check_permission(
+            "urllib.Request", ("https://example.com/health/check", None, {}, None)
+        )
+
+    def test_url_multiple_patterns(self, tmp_path):
+        """Test matching against multiple URL patterns."""
+        config = {
+            "allow_http_urls": [
+                "api.example.com/v1/*",
+                "cdn.example.com/assets/*",
+                "example.com/health",
+            ]
+        }
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Each pattern should match
+        assert engine.check_permission(
+            "urllib.Request", ("https://api.example.com/v1/users", None, {}, None)
+        )
+        assert engine.check_permission(
+            "urllib.Request", ("https://cdn.example.com/assets/img.png", None, {}, None)
+        )
+        assert engine.check_permission(
+            "urllib.Request", ("https://example.com/health", None, {}, None)
+        )
+        # None should match
+        assert not engine.check_permission(
+            "urllib.Request", ("https://other.example.com/data", None, {}, None)
+        )
+
+    def test_save_url_decision(self, tmp_path):
+        """Test that URL decisions are saved to config."""
+        config_path = tmp_path / ".malwi-box.toml"
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Record a URL decision
+        engine.record_decision(
+            "urllib.Request",
+            ("https://api.example.com/v1/users", None, {}, "GET"),
+            allowed=True,
+            details={"url": "https://api.example.com/v1/users", "method": "GET"},
+        )
+        engine.save_decisions()
+
+        # Reload and verify
+        saved_config = toml.loads(config_path.read_text())
+        assert "allow_http_urls" in saved_config
+        assert "api.example.com/v1/users" in saved_config["allow_http_urls"]
+
+
+class TestURLPatternMatching:
+    """Tests for the _url_matches_pattern helper method."""
+
+    def test_pattern_matching_basic(self, tmp_path):
+        """Test basic URL pattern matching."""
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box.toml", workdir=tmp_path)
+
+        # Exact match
+        assert engine._url_matches_pattern("https://example.com/api", "example.com/api")
+        # Glob match
+        assert engine._url_matches_pattern(
+            "https://example.com/api/v1/users", "example.com/api/*"
+        )
+
+    def test_pattern_matching_root_path(self, tmp_path):
+        """Test matching root path."""
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box.toml", workdir=tmp_path)
+
+        assert engine._url_matches_pattern("https://example.com/", "example.com/")
+        assert engine._url_matches_pattern("https://example.com", "example.com/")
+
+    def test_pattern_matching_wildcard_domain(self, tmp_path):
+        """Test that wildcard in domain part doesn't accidentally match."""
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box.toml", workdir=tmp_path)
+
+        # Pattern *.example.com should NOT be treated as glob in domain
+        # (subdomain matching is done differently)
+        assert not engine._url_matches_pattern(
+            "https://evil.com/example.com/path", "example.com/*"
+        )

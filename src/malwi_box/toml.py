@@ -140,7 +140,7 @@ def loads(s: str) -> dict:
                 while pos < len(s) and s[pos] != "\n":
                     pos += 1
                 continue
-            raise TOMLError(f"Expected key at position {pos}: {s[pos:pos+20]}")
+            raise TOMLError(f"Expected key at position {pos}: {s[pos : pos + 20]}")
         key = match.group(1)
         pos += len(key)
         pos = _skip_whitespace(s, pos)

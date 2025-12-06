@@ -234,6 +234,9 @@ class BoxEngine:
             "allow_executables": [],  # Block all by default, use ["*"] to allow all
             "allow_shell_commands": [],  # Block all by default, use ["*"] to allow all
             "allow_ips": [],  # CIDR notation supported
+            "allow_http_urls": [],  # URL path patterns (e.g., "api.example.com/v1/*")
+            "allow_http_methods": [],  # HTTP methods (e.g., ["GET", "POST"])
+            "allow_http_payload_hashes": [],  # Response verification: [{url, hash}]
         }
 
     def _load_config(self) -> dict[str, Any]:
@@ -798,6 +801,110 @@ class BoxEngine:
         # It's a hostname - check against allow_domains
         return self._check_domain((host, port), "socket.connect")
 
+    def _domain_matches(self, host: str, pattern_host: str) -> bool:
+        """Check if host matches pattern (exact or subdomain)."""
+        if not host or not pattern_host:
+            return False
+        # Exact match or subdomain match
+        return host == pattern_host or host.endswith("." + pattern_host)
+
+    def _url_matches_pattern(self, url: str, pattern: str) -> bool:
+        """Match URL against pattern with optional scheme.
+
+        Args:
+            url: The full URL to check (e.g., "https://api.example.com/v1/users")
+            pattern: Pattern to match (e.g., "api.example.com/v1/*")
+
+        Returns:
+            True if URL matches pattern.
+        """
+        # Normalize URL - add scheme if missing
+        if "://" not in url:
+            url = f"https://{url}"
+        parsed_url = urlparse(url)
+
+        # Normalize pattern - add scheme if missing
+        pattern_has_scheme = "://" in pattern
+        if not pattern_has_scheme:
+            pattern = f"https://{pattern}"
+        parsed_pattern = urlparse(pattern)
+
+        # If pattern has explicit scheme, it must match
+        if pattern_has_scheme and parsed_url.scheme != parsed_pattern.scheme:
+            return False
+
+        # Extract host (without port) for comparison
+        url_host = parsed_url.hostname or ""
+        pattern_host = parsed_pattern.hostname or ""
+
+        # Domain must match (exact or subdomain)
+        if not self._domain_matches(url_host, pattern_host):
+            return False
+
+        # Port must match if pattern specifies one
+        if parsed_pattern.port is not None and parsed_url.port != parsed_pattern.port:
+            return False
+
+        # Path must match (glob pattern)
+        url_path = parsed_url.path or "/"
+        pattern_path = parsed_pattern.path or "/"
+
+        # Handle query string in pattern
+        if parsed_pattern.query:
+            url_full_path = (
+                f"{url_path}?{parsed_url.query}" if parsed_url.query else url_path
+            )
+            pattern_full_path = f"{pattern_path}?{parsed_pattern.query}"
+            return fnmatch.fnmatch(url_full_path, pattern_full_path)
+
+        return fnmatch.fnmatch(url_path, pattern_path)
+
+    def _check_url_request(self, args: tuple) -> bool:
+        """Check if URL request is permitted.
+
+        Args:
+            args: (url, data, headers, method) from urllib.Request event
+                  or (url, method) from http.request event
+
+        Returns:
+            True if allowed, False otherwise.
+        """
+        if not args:
+            return True
+
+        url = args[0]
+        if not url or not isinstance(url, str):
+            return True
+
+        # Check HTTP method restrictions
+        method = args[3] if len(args) > 3 else (args[1] if len(args) > 1 else None)
+        if isinstance(method, str):
+            allowed_methods = self.config.get("allow_http_methods", [])
+            upper_allowed = [m.upper() for m in allowed_methods]
+            if allowed_methods and method.upper() not in upper_allowed:
+                return False
+
+        allow_urls = self.config.get("allow_http_urls", [])
+
+        # If allow_http_urls is empty, fall back to domain-only mode
+        # (domain checking happens at socket level via allow_domains)
+        if not allow_urls:
+            return True
+
+        # Check against URL patterns
+        return any(self._url_matches_pattern(url, pattern) for pattern in allow_urls)
+
+    def _check_http_request(self, args: tuple) -> bool:
+        """Check if HTTP request is permitted.
+
+        Args:
+            args: (url, method) from http.request event
+
+        Returns:
+            True if allowed, False otherwise.
+        """
+        return self._check_url_request(args)
+
     def check_permission(self, event: str, args: tuple) -> bool:
         """Check if an audit event is permitted.
 
@@ -835,6 +942,10 @@ class BoxEngine:
             "socket.gethostbyaddr",
         ):
             return self._check_domain(args, event)
+        elif event == "urllib.Request":
+            return self._check_url_request(args)
+        elif event == "http.request":
+            return self._check_http_request(args)
 
         # Events not explicitly handled are allowed
         return True
@@ -938,7 +1049,7 @@ class BoxEngine:
                 path_var = self._path_to_variable(path)
                 existing = config.get(key, [])
                 if not self._entry_exists(existing, path_var):
-                    # Hash for read/modify, plain path for create (file doesn't exist yet)
+                    # Hash for read/modify, plain path for create (doesn't exist yet)
                     if key in ("allow_read", "allow_modify"):
                         entry = self._build_file_entry(path_var, path_obj)
                     else:
@@ -978,6 +1089,36 @@ class BoxEngine:
                     entry = f"{domain}:{port}" if port else domain
                     if entry not in config.get("allow_domains", []):
                         config.setdefault("allow_domains", []).append(entry)
+
+            elif event in ("urllib.Request", "http.request"):
+                url = details.get("url")
+                method = details.get("method")
+                if url:
+                    # Extract domain and path to create pattern
+                    parsed = urlparse(url)
+                    url_pattern = f"{parsed.netloc}{parsed.path}"
+                    if url_pattern not in config.get("allow_http_urls", []):
+                        config.setdefault("allow_http_urls", []).append(url_pattern)
+                # Save HTTP method if specified
+                if method:
+                    method_upper = method.upper()
+                    if method_upper not in config.get("allow_http_methods", []):
+                        config.setdefault("allow_http_methods", []).append(method_upper)
+
+            elif event == "http.response":
+                url_pattern = details.get("url")
+                payload_hash = details.get("hash")
+                if url_pattern and payload_hash:
+                    entry = {"url": url_pattern, "hash": payload_hash}
+                    existing = config.get("allow_http_payload_hashes", [])
+                    # Check if already exists
+                    has_url = any(
+                        e.get("url") == url_pattern
+                        for e in existing
+                        if isinstance(e, dict)
+                    )
+                    if not has_url:
+                        config.setdefault("allow_http_payload_hashes", []).append(entry)
 
         # Write updated config
         try:
