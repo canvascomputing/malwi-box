@@ -8,7 +8,7 @@ if sys.platform != "win32":
 
 ext_module = Extension(
     "malwi_box._audit_hook",
-    sources=["src/malwi_box/_audit_hook.cpp"],
+    sources=["src/malwi_box/malwi_box.cpp"],
     language="c++",
     extra_compile_args=extra_compile_args,
 )
