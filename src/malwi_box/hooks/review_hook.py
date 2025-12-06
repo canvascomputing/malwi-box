@@ -21,28 +21,52 @@ def setup_hook():
         return
 
     engine = BoxEngine()
+    session_allowed: set[tuple] = set()
+    in_hook = False  # Recursion guard
+
+    def make_hashable(obj):
+        """Convert an object to a hashable form."""
+        if isinstance(obj, (list, tuple)):
+            return tuple(make_hashable(item) for item in obj)
+        if isinstance(obj, dict):
+            return tuple(sorted((k, make_hashable(v)) for k, v in obj.items()))
+        return obj
 
     def hook(event, args):
-        if engine.check_permission(event, args):
+        nonlocal in_hook
+        if in_hook:
+            return  # Prevent recursion
+
+        # Check if already approved this session
+        key = (event, make_hashable(args))
+        if key in session_allowed:
             return
 
-        print(f"[AUDIT] {format_event(event, args)}", file=sys.stderr)
+        in_hook = True
         try:
-            response = input("Allow? [Y/n]: ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print("\nAborted.", file=sys.stderr)
-            sys.stderr.flush()
-            engine.save_decisions()
-            os._exit(130)
+            if engine.check_permission(event, args):
+                return
 
-        if response == "n":
-            print("Denied. Terminating.", file=sys.stderr)
-            sys.stderr.flush()
-            engine.save_decisions()
-            os._exit(1)
+            print(f"[AUDIT] {format_event(event, args)}", file=sys.stderr)
+            try:
+                response = input("Allow? [Y/n]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\nAborted.", file=sys.stderr)
+                sys.stderr.flush()
+                engine.save_decisions()
+                os._exit(130)
 
-        details = extract_decision_details(event, args)
-        engine.record_decision(event, args, allowed=True, details=details)
+            if response == "n":
+                print("Denied. Terminating.", file=sys.stderr)
+                sys.stderr.flush()
+                engine.save_decisions()
+                os._exit(1)
+
+            session_allowed.add(key)
+            details = extract_decision_details(event, args)
+            engine.record_decision(event, args, allowed=True, details=details)
+        finally:
+            in_hook = False
 
     def save_on_exit():
         engine.save_decisions()

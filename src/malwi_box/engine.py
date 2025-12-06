@@ -43,31 +43,15 @@ class BoxEngine:
 
     def _default_config(self) -> dict[str, Any]:
         """Return default configuration with workdir permissions."""
-        workdir_str = str(self.workdir)
-
-        # Get Python's standard library paths
-        stdlib_paths = []
-        try:
-            import sysconfig
-            stdlib = sysconfig.get_path("stdlib")
-            if stdlib:
-                stdlib_paths.append(stdlib)
-            purelib = sysconfig.get_path("purelib")
-            if purelib:
-                stdlib_paths.append(purelib)
-            platlib = sysconfig.get_path("platlib")
-            if platlib:
-                stdlib_paths.append(platlib)
-        except Exception:
-            pass
-
-        # Also include common system paths for reading
-        read_paths = [workdir_str] + stdlib_paths
-
         return {
-            "allow_read": read_paths,
-            "allow_create": [workdir_str],
-            "allow_modify": [workdir_str],
+            "allow_read": [
+                "$PWD",
+                "$PYTHON_STDLIB",
+                "$PYTHON_SITE_PACKAGES",
+                "$PYTHON_PLATLIB",
+            ],
+            "allow_create": ["$PWD"],
+            "allow_modify": ["$PWD"],
             "allow_delete": [],  # Conservative default - no delete allowed
             "allow_env_var_reads": [],
             "allow_env_var_writes": [],
@@ -93,8 +77,71 @@ class BoxEngine:
                 return self._default_config()
         return self._default_config()
 
+    def _expand_path_variables(self, path: str) -> str:
+        """Expand variables in a path string.
+
+        Supports:
+          $PWD, $HOME, $TMPDIR
+          $PYTHON_STDLIB, $PYTHON_SITE_PACKAGES, $PYTHON_PLATLIB, $PYTHON_PREFIX
+          $ENV{VAR_NAME}
+        """
+        if "$" not in path:
+            return path
+
+        import re
+        import sysconfig
+        import tempfile
+
+        variables = {
+            "$PWD": str(self.workdir),
+            "$HOME": os.path.expanduser("~"),
+            "$TMPDIR": tempfile.gettempdir(),
+            "$PYTHON_STDLIB": sysconfig.get_path("stdlib") or "",
+            "$PYTHON_SITE_PACKAGES": sysconfig.get_path("purelib") or "",
+            "$PYTHON_PLATLIB": sysconfig.get_path("platlib") or "",
+            "$PYTHON_PREFIX": sys.prefix,
+        }
+
+        result = path
+        for var, value in variables.items():
+            if var in result:
+                result = result.replace(var, value)
+
+        # Handle $ENV{VAR_NAME} pattern
+        def env_replace(match: re.Match) -> str:
+            var_name = match.group(1)
+            return os.environ.get(var_name, "")
+
+        result = re.sub(r"\$ENV\{([^}]+)\}", env_replace, result)
+
+        return result
+
+    def _path_to_variable(self, path: str) -> str:
+        """Convert an absolute path to a variable if possible."""
+        import sysconfig
+        import tempfile
+
+        # Order matters - more specific first
+        mappings = [
+            (sysconfig.get_path("purelib"), "$PYTHON_SITE_PACKAGES"),
+            (sysconfig.get_path("platlib"), "$PYTHON_PLATLIB"),
+            (sysconfig.get_path("stdlib"), "$PYTHON_STDLIB"),
+            (sys.prefix, "$PYTHON_PREFIX"),
+            (tempfile.gettempdir(), "$TMPDIR"),
+            (str(self.workdir), "$PWD"),
+            (os.path.expanduser("~"), "$HOME"),
+        ]
+
+        for prefix, var in mappings:
+            if prefix and path.startswith(prefix):
+                return path.replace(prefix, var, 1)
+
+        return path
+
     def _resolve_path(self, path: str | Path) -> Path:
-        """Resolve a path to an absolute path."""
+        """Resolve a path to an absolute path, expanding variables."""
+        if isinstance(path, str):
+            path = self._expand_path_variables(path)
         p = Path(path)
         if not p.is_absolute():
             p = self.workdir / p
@@ -415,6 +462,8 @@ class BoxEngine:
                 else:
                     key = "allow_read"
 
+                # Convert path to variable if possible for portability
+                path = self._path_to_variable(path)
                 if path not in config.get(key, []):
                     config.setdefault(key, []).append(path)
 

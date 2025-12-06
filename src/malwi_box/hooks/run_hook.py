@@ -18,12 +18,21 @@ def setup_hook():
         return
 
     engine = BoxEngine()
+    in_hook = False  # Recursion guard
 
     def hook(event, args):
-        if not engine.check_permission(event, args):
-            sys.stderr.write(f"[malwi-box] BLOCKED: {format_event(event, args)}\n")
-            sys.stderr.flush()
-            os._exit(78)
+        nonlocal in_hook
+        if in_hook:
+            return
+
+        in_hook = True
+        try:
+            if not engine.check_permission(event, args):
+                sys.stderr.write(f"[malwi-box] BLOCKED: {format_event(event, args)}\n")
+                sys.stderr.flush()
+                os._exit(78)
+        finally:
+            in_hook = False
 
     install_hook(hook)
 

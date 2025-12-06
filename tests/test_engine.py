@@ -13,9 +13,10 @@ class TestConfigLoading:
         engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
 
         assert engine.config["allow_pypi_requests"] is True
-        assert str(tmp_path) in engine.config["allow_read"]
-        assert str(tmp_path) in engine.config["allow_create"]
-        assert str(tmp_path) in engine.config["allow_modify"]
+        # Default config uses variables like $PWD which get expanded at runtime
+        assert "$PWD" in engine.config["allow_read"]
+        assert "$PWD" in engine.config["allow_create"]
+        assert "$PWD" in engine.config["allow_modify"]
         assert engine.config["allow_delete"] == []  # Conservative default
 
     def test_load_config_from_file(self, tmp_path):
@@ -460,3 +461,153 @@ class TestUnhandledEvents:
         assert engine.check_permission("compile", ("source", "filename"))
         assert engine.check_permission("exec", ("code",))
         assert engine.check_permission("import", ("module",))
+
+
+class TestPathVariableExpansion:
+    """Tests for path variable expansion."""
+
+    def test_expand_pwd(self, tmp_path):
+        """Test that $PWD is expanded to workdir."""
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+
+        result = engine._expand_path_variables("$PWD/subdir")
+        assert result == f"{tmp_path}/subdir"
+
+    def test_expand_home(self, tmp_path):
+        """Test that $HOME is expanded correctly."""
+        import os
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+
+        result = engine._expand_path_variables("$HOME/.config")
+        expected = os.path.expanduser("~") + "/.config"
+        assert result == expected
+
+    def test_expand_tmpdir(self, tmp_path):
+        """Test that $TMPDIR is expanded correctly."""
+        import tempfile
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+
+        result = engine._expand_path_variables("$TMPDIR/test")
+        expected = tempfile.gettempdir() + "/test"
+        assert result == expected
+
+    def test_expand_python_stdlib(self, tmp_path):
+        """Test that $PYTHON_STDLIB is expanded correctly."""
+        import sysconfig
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+
+        result = engine._expand_path_variables("$PYTHON_STDLIB")
+        expected = sysconfig.get_path("stdlib") or ""
+        assert result == expected
+
+    def test_expand_python_site_packages(self, tmp_path):
+        """Test that $PYTHON_SITE_PACKAGES is expanded correctly."""
+        import sysconfig
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+
+        result = engine._expand_path_variables("$PYTHON_SITE_PACKAGES")
+        expected = sysconfig.get_path("purelib") or ""
+        assert result == expected
+
+    def test_expand_env_var(self, tmp_path, monkeypatch):
+        """Test that $ENV{VAR} expands to environment variable."""
+        monkeypatch.setenv("MY_TEST_VAR", "/custom/path")
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+
+        result = engine._expand_path_variables("$ENV{MY_TEST_VAR}/subdir")
+        assert result == "/custom/path/subdir"
+
+    def test_expand_env_var_missing(self, tmp_path):
+        """Test that missing $ENV{VAR} expands to empty string."""
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+
+        result = engine._expand_path_variables("$ENV{NONEXISTENT_VAR_12345}/subdir")
+        assert result == "/subdir"
+
+    def test_no_expansion_without_dollar(self, tmp_path):
+        """Test that paths without $ are returned unchanged."""
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+
+        result = engine._expand_path_variables("/some/absolute/path")
+        assert result == "/some/absolute/path"
+
+    def test_variables_work_in_config(self, tmp_path):
+        """Test that variables in config are expanded for permission checks."""
+        config = {"allow_read": ["$PWD/allowed"]}
+        config_path = tmp_path / ".malwi-box"
+        config_path.write_text(json.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+        allowed_dir = tmp_path / "allowed"
+        allowed_dir.mkdir()
+        test_file = allowed_dir / "test.txt"
+        test_file.write_text("test")
+
+        # File in $PWD/allowed should be allowed
+        assert engine.check_permission("open", (str(test_file), "r", 0))
+
+
+class TestPathToVariable:
+    """Tests for converting paths back to variables."""
+
+    def test_convert_pwd(self, tmp_path):
+        """Test converting workdir path to $PWD."""
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+
+        result = engine._path_to_variable(f"{tmp_path}/subdir")
+        assert result == "$PWD/subdir"
+
+    def test_convert_home(self, tmp_path):
+        """Test converting home path to $HOME."""
+        import os
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+        home = os.path.expanduser("~")
+
+        result = engine._path_to_variable(f"{home}/.config")
+        assert result == "$HOME/.config"
+
+    def test_convert_tmpdir(self, tmp_path):
+        """Test converting temp path to $TMPDIR."""
+        import tempfile
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+        tmpdir = tempfile.gettempdir()
+
+        result = engine._path_to_variable(f"{tmpdir}/test")
+        assert result == "$TMPDIR/test"
+
+    def test_convert_site_packages(self, tmp_path):
+        """Test converting site-packages path to $PYTHON_SITE_PACKAGES."""
+        import sysconfig
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+        site_packages = sysconfig.get_path("purelib")
+
+        if site_packages:
+            result = engine._path_to_variable(f"{site_packages}/mypackage")
+            assert result == "$PYTHON_SITE_PACKAGES/mypackage"
+
+    def test_no_conversion_for_unknown_path(self, tmp_path):
+        """Test that unknown paths are returned unchanged."""
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box", workdir=tmp_path)
+
+        result = engine._path_to_variable("/some/random/path")
+        assert result == "/some/random/path"
+
+    def test_save_decisions_converts_to_variables(self, tmp_path):
+        """Test that save_decisions converts paths to variables."""
+        config_path = tmp_path / ".malwi-box"
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Record a decision with an absolute path in workdir
+        test_path = f"{tmp_path}/test.txt"
+        engine.record_decision(
+            "open",
+            (test_path, "r"),
+            allowed=True,
+            details={"path": test_path, "mode": "r", "is_new_file": False},
+        )
+
+        engine.save_decisions()
+
+        saved_config = json.loads(config_path.read_text())
+        # Should be saved as $PWD/test.txt, not the absolute path
+        assert "$PWD/test.txt" in saved_config.get("allow_read", [])

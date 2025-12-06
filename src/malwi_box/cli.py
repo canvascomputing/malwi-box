@@ -106,33 +106,67 @@ def install_command(args: argparse.Namespace) -> int:
         import atexit
 
         atexit.register(engine.save_decisions)
+        session_allowed: set[tuple] = set()
+        in_hook = False  # Recursion guard
+
+        def make_hashable(obj):
+            """Convert an object to a hashable form."""
+            if isinstance(obj, (list, tuple)):
+                return tuple(make_hashable(item) for item in obj)
+            if isinstance(obj, dict):
+                return tuple(sorted((k, make_hashable(v)) for k, v in obj.items()))
+            return obj
 
         def review_hook(event, hook_args):
-            if engine.check_permission(event, hook_args):
+            nonlocal in_hook
+            if in_hook:
+                return  # Prevent recursion
+
+            # Check if already approved this session
+            key = (event, make_hashable(hook_args))
+            if key in session_allowed:
                 return
 
-            print(f"[AUDIT] {format_event(event, hook_args)}", file=sys.stderr)
+            in_hook = True
             try:
-                response = input("Allow? [Y/n]: ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                print("\nAborted.", file=sys.stderr)
-                engine.save_decisions()
-                sys.exit(130)
-            if response == "n":
-                print("Denied. Terminating.", file=sys.stderr)
-                engine.save_decisions()
-                sys.exit(1)
+                if engine.check_permission(event, hook_args):
+                    return
 
-            details = extract_decision_details(event, hook_args)
-            engine.record_decision(event, hook_args, allowed=True, details=details)
+                print(f"[AUDIT] {format_event(event, hook_args)}", file=sys.stderr)
+                try:
+                    response = input("Allow? [Y/n]: ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    print("\nAborted.", file=sys.stderr)
+                    engine.save_decisions()
+                    sys.exit(130)
+                if response == "n":
+                    print("Denied. Terminating.", file=sys.stderr)
+                    engine.save_decisions()
+                    sys.exit(1)
+
+                session_allowed.add(key)
+                details = extract_decision_details(event, hook_args)
+                engine.record_decision(event, hook_args, allowed=True, details=details)
+            finally:
+                in_hook = False
 
         install_hook(review_hook, blocklist={"builtins.input", "builtins.input/result"})
     else:
+        in_enforce_hook = False  # Recursion guard
+
         def enforce_hook(event, hook_args):
-            if not engine.check_permission(event, hook_args):
-                msg = f"[malwi-box] BLOCKED: {format_event(event, hook_args)}"
-                print(msg, file=sys.stderr)
-                sys.exit(78)
+            nonlocal in_enforce_hook
+            if in_enforce_hook:
+                return
+
+            in_enforce_hook = True
+            try:
+                if not engine.check_permission(event, hook_args):
+                    msg = f"[malwi-box] BLOCKED: {format_event(event, hook_args)}"
+                    print(msg, file=sys.stderr)
+                    sys.exit(78)
+            finally:
+                in_enforce_hook = False
 
         install_hook(enforce_hook)
 
