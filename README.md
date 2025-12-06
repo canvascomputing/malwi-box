@@ -31,16 +31,6 @@ Or with uv:
 uv tool install malwi-box
 ```
 
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `malwi-box run script.py` | Block operations not allowed in `.malwi-box.toml` |
-| `malwi-box run --review script.py` | Approve/deny each operation, save to config |
-| `malwi-box run --force script.py` | Log violations without blocking |
-| `malwi-box install package` | Install pip package with config restrictions |
-| `malwi-box config create` | Create default `.malwi-box.toml` |
-
 ## Quick Start
 
 ```bash
@@ -48,57 +38,36 @@ malwi-box config create
 malwi-box run script.py
 ```
 
-## Examples
+## Commands
 
-### Audit a suspicious package
-```bash
-malwi-box install --review sketchy-package
-```
+### `malwi-box run`
 
-### Allow network access
+Run a Python script or module with sandboxing.
+
 ```bash
-malwi-box run examples/network_request.py
-```
-`.malwi-box.toml`:
-```toml
-allow_domains = ["httpbin.org"]
+malwi-box run script.py [args...]
+malwi-box run --review script.py    # approve/deny each operation
+malwi-box run --force script.py     # log violations without blocking
 ```
 
-### Allow file reads
+### `malwi-box install`
+
+Install pip packages with sandboxing.
+
 ```bash
-malwi-box run examples/file_read.py
-```
-`.malwi-box.toml`:
-```toml
-allow_read = ["/etc/passwd"]
+malwi-box install package
+malwi-box install package --version 1.2.3
+malwi-box install -r requirements.txt
+malwi-box install --review package  # approve/deny each operation
 ```
 
-### Allow shell commands
-```bash
-malwi-box run examples/system_command.py
-```
-`.malwi-box.toml`:
-```toml
-allow_shell_commands = ["/bin/ls *"]
-```
+### `malwi-box config`
 
-### Allow executables
-```bash
-malwi-box run examples/executable_control.py
-```
-`.malwi-box.toml`:
-```toml
-allow_executables = [
-  "/usr/bin/echo",
-  { path = "/usr/bin/git", hash = "sha256:e3b0c44..." },
-]
-```
+Manage configuration.
 
-### Review mode
 ```bash
-malwi-box run --review examples/network_request.py
-# 'y' to approve, 'n' to deny, 'i' to inspect call stack
-# Approved operations saved to .malwi-box.toml
+malwi-box config create             # creates .malwi-box.toml
+malwi-box config create --path FILE
 ```
 
 ## Configuration Reference
@@ -213,5 +182,4 @@ Blocked operations terminate immediately with exit code 78.
 ## Limitations
 
 - Audit hooks cannot be bypassed from Python, but native code can
-- `ctypes.dlopen` is blocked by default to prevent native bypasses
-- Requires Python 3.10+
+- Here it is important to review which executables are allow-listed
