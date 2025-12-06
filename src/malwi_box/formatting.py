@@ -130,7 +130,8 @@ def extract_decision_details(event: str, args: tuple) -> dict:
         details["library"] = str(args[0]) if args else ""
 
     elif event in ("os.putenv", "os.unsetenv"):
-        details["key"] = str(args[0])
+        key = args[0]
+        details["key"] = key.decode() if isinstance(key, bytes) else str(key)
 
     elif event == "socket.getaddrinfo":
         details["domain"] = str(args[0])
