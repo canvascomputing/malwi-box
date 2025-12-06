@@ -22,8 +22,13 @@ def _truncate(s: str, max_len: int) -> str:
 
 
 def _build_command(exe, cmd_args) -> str:
-    """Build command string from executable and args."""
-    return " ".join([str(exe)] + [str(a) for a in cmd_args])
+    """Build command string from executable and args.
+
+    cmd_args is typically argv which includes the program name as first element.
+    """
+    if cmd_args:
+        return " ".join(str(a) for a in cmd_args)
+    return str(exe)
 
 
 def format_event(event: str, args: tuple) -> str:
