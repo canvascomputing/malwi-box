@@ -5,6 +5,7 @@ It can also be imported directly for testing.
 """
 
 import atexit
+import inspect
 import os
 import sys
 
@@ -67,6 +68,36 @@ def get_event_color(event: str, args: tuple) -> str:
     return YELLOW
 
 
+def get_caller_info() -> list[tuple[str, int, str, str]]:
+    """Get call stack excluding malwi-box internals.
+
+    Returns list of (filename, lineno, function, code_context) tuples.
+    """
+    stack = inspect.stack()
+    result = []
+
+    # Skip frames from malwi-box itself
+    skip_paths = {"malwi_box", "sitecustomize.py"}
+
+    for frame_info in stack:
+        filename = frame_info.filename
+        # Skip internal frames
+        if any(skip in filename for skip in skip_paths):
+            continue
+        # Skip frames from standard library audit hook machinery
+        if "<" in filename:  # e.g., <frozen importlib._bootstrap>
+            continue
+
+        result.append((
+            filename,
+            frame_info.lineno,
+            frame_info.function,
+            frame_info.code_context[0].strip() if frame_info.code_context else "",
+        ))
+
+    return result
+
+
 def setup_hook(engine=None):
     """Set up the review hook.
 
@@ -75,6 +106,7 @@ def setup_hook(engine=None):
     """
     from malwi_box import extract_decision_details, format_event, install_hook
     from malwi_box.engine import BoxEngine
+    from malwi_box.formatting import format_stack_trace
 
     if engine is None:
         engine = BoxEngine()
@@ -107,13 +139,22 @@ def setup_hook(engine=None):
             color = get_event_color(event, args)
             msg = f"{color}[malwi-box] {format_event(event, args)}{RESET}"
             print(msg, file=sys.stderr)
-            try:
-                response = input("Approve? [Y/n]: ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                print(f"\n{YELLOW}Aborted{RESET}", file=sys.stderr)
-                sys.stderr.flush()
-                engine.save_decisions()
-                os._exit(130)
+
+            # Prompt loop with inspect option
+            while True:
+                try:
+                    response = input("Approve? [Y/n/i]: ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    print(f"\n{YELLOW}Aborted{RESET}", file=sys.stderr)
+                    sys.stderr.flush()
+                    engine.save_decisions()
+                    os._exit(130)
+
+                if response == "i":
+                    caller_info = get_caller_info()
+                    print(f"\n{format_stack_trace(caller_info)}\n", file=sys.stderr)
+                    continue  # Re-prompt
+                break  # Y, n, or empty
 
             if response == "n":
                 print(f"{YELLOW}Denied{RESET}", file=sys.stderr)

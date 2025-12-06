@@ -1,5 +1,6 @@
 """Formatting utilities for audit events."""
 
+import os
 from pathlib import Path
 
 MAX_VALUE_LEN = 50
@@ -151,3 +152,34 @@ def extract_decision_details(event: str, args: tuple) -> dict:
                 details["port"] = args[1][1]
 
     return details
+
+
+def format_stack_trace(caller_info: list) -> str:
+    """Format caller info as a minimal stack trace.
+
+    Top frame gets arrow and code context. Rest are compact.
+
+    Args:
+        caller_info: List of (filename, lineno, function, code_context) tuples.
+
+    Returns:
+        Formatted stack trace string.
+    """
+    if not caller_info:
+        return "  (no user code in stack)"
+
+    lines = []
+    for i, (filename, lineno, func, code) in enumerate(caller_info[:5]):
+        # Use basename for cleaner output
+        basename = os.path.basename(filename)
+
+        if i == 0:
+            # Top frame: arrow + code context
+            lines.append(f"  → {basename}:{lineno} in {func}")
+            if code:
+                lines.append(f"      {code}")
+        else:
+            # Other frames: minimal
+            lines.append(f"    {basename}:{lineno} in {func}")
+
+    return "\n".join(lines)

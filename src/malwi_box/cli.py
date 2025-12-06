@@ -46,7 +46,6 @@ def _run_with_hook(command: list[str], template: str) -> int:
             result = subprocess.run(cmd, env=env)
             return result.returncode
         except KeyboardInterrupt:
-            print("\nAborted.", file=sys.stderr)
             return 130
 
 
