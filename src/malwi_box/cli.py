@@ -15,6 +15,9 @@ RUN_SITECUSTOMIZE_TEMPLATE = (
 REVIEW_SITECUSTOMIZE_TEMPLATE = (
     "from malwi_box.hooks.review_hook import setup_hook; setup_hook()"
 )
+FORCE_SITECUSTOMIZE_TEMPLATE = (
+    "from malwi_box.hooks.force_hook import setup_hook; setup_hook()"
+)
 
 
 def _run_with_hook(command: list[str], template: str) -> int:
@@ -53,12 +56,21 @@ def run_command(args: argparse.Namespace) -> int:
     """Run command with sandboxing."""
     command = list(args.command)
     review = args.review
+    force = args.force
 
     if "--review" in command:
         command.remove("--review")
         review = True
+    if "--force" in command:
+        command.remove("--force")
+        force = True
 
-    template = REVIEW_SITECUSTOMIZE_TEMPLATE if review else RUN_SITECUSTOMIZE_TEMPLATE
+    if force:
+        template = FORCE_SITECUSTOMIZE_TEMPLATE
+    elif review:
+        template = REVIEW_SITECUSTOMIZE_TEMPLATE
+    else:
+        template = RUN_SITECUSTOMIZE_TEMPLATE
     return _run_with_hook(command, template)
 
 
@@ -141,6 +153,11 @@ def main() -> int:
         "--review",
         action="store_true",
         help="Enable interactive approval mode",
+    )
+    run_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Log violations without blocking",
     )
 
     install_parser = subparsers.add_parser(

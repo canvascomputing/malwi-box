@@ -16,20 +16,21 @@
 
 > **Warning**: This tool is not a sandbox with isolated execution, it runs on your actual machine, kernel and CPU. Use at your own risk.
 
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `malwi-box run script.py` | Block operations not allowed in `.malwi-box.yaml` |
+| `malwi-box run --review script.py` | Approve/deny each operation, save to config |
+| `malwi-box run --force script.py` | Log violations without blocking |
+| `malwi-box install package` | Install pip package with config restrictions |
+| `malwi-box config create` | Create default `.malwi-box.yaml` |
+
 ## Quick Start
 
 ```bash
-# Create default config
 malwi-box config create
-
-# Run script with enforcement
 malwi-box run script.py
-
-# Interactive review mode - approve/deny each operation
-malwi-box run --review script.py
-
-# Sandboxed pip install
-malwi-box install requests
 ```
 
 ## Examples
