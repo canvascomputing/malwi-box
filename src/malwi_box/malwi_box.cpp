@@ -3,6 +3,11 @@
 #include <string.h>
 #include <stdlib.h>
 
+// Py_IsFinalizing was added in Python 3.13, use private API for older versions
+#if PY_VERSION_HEX < 0x030D0000
+#define Py_IsFinalizing() _Py_IsFinalizing()
+#endif
+
 // Module state structure
 typedef struct {
     PyObject *callback;  // User-provided Python callable
@@ -47,7 +52,7 @@ static int audit_hook(const char *event, PyObject *args, void *userData) {
     }
 
     // Skip if interpreter is finalizing to avoid accessing freed objects
-    if (_Py_IsFinalizing()) {
+    if (Py_IsFinalizing()) {
         return 0;
     }
 
@@ -187,7 +192,7 @@ static int profile_hook(PyObject *obj, PyFrameObject *frame, int what, PyObject 
     }
 
     // Skip if finalizing
-    if (_Py_IsFinalizing()) {
+    if (Py_IsFinalizing()) {
         return 0;
     }
 

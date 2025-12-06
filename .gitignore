@@ -43,3 +43,6 @@ uv.lock
 
 # OS
 .DS_Store
+
+# malwi-box config
+.malwi-box.yaml

@@ -329,10 +329,10 @@ class BoxEngine:
             (sysconfig.get_path("platlib"), "$PYTHON_PLATLIB"),
             (sysconfig.get_path("stdlib"), "$PYTHON_STDLIB"),
             (sys.prefix, "$PYTHON_PREFIX"),
-            # System paths
+            # System paths - $PWD before $TMPDIR so workdir paths are preferred
             (self._get_cache_home(), "$CACHE_HOME"),
-            (tempfile.gettempdir(), "$TMPDIR"),
             (str(self.workdir), "$PWD"),
+            (tempfile.gettempdir(), "$TMPDIR"),
             (os.path.expanduser("~"), "$HOME"),
         ]
 

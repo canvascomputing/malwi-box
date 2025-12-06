@@ -592,51 +592,59 @@ class TestDecisionRecording:
         config_path = tmp_path / ".malwi-box.yaml"
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
+        test_file = str(tmp_path / "test.txt")
         engine.record_decision(
             "open",
-            ("/tmp/test.txt", "r"),
+            (test_file, "r"),
             allowed=True,
-            details={"path": "/tmp/test.txt", "mode": "r", "is_new_file": False},
+            details={"path": test_file, "mode": "r", "is_new_file": False},
         )
 
         engine.save_decisions()
 
         saved_config = yaml.safe_load(config_path.read_text())
-        assert "/tmp/test.txt" in saved_config.get("allow_read", [])
+        # Path is converted to $PWD variable (workdir)
+        allow_read = saved_config.get("allow_read", [])
+        assert any("$PWD/test.txt" in str(e) for e in allow_read)
 
     def test_record_and_save_create_decision(self, tmp_path):
         """Test that create decisions are saved correctly."""
         config_path = tmp_path / ".malwi-box.yaml"
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
+        new_file = str(tmp_path / "newfile.txt")
         engine.record_decision(
             "open",
-            ("/tmp/newfile.txt", "w"),
+            (new_file, "w"),
             allowed=True,
-            details={"path": "/tmp/newfile.txt", "mode": "w", "is_new_file": True},
+            details={"path": new_file, "mode": "w", "is_new_file": True},
         )
 
         engine.save_decisions()
 
         saved_config = yaml.safe_load(config_path.read_text())
-        assert "/tmp/newfile.txt" in saved_config.get("allow_create", [])
+        # Path is converted to $PWD variable (workdir)
+        assert "$PWD/newfile.txt" in saved_config.get("allow_create", [])
 
     def test_record_and_save_modify_decision(self, tmp_path):
         """Test that modify decisions are saved correctly."""
         config_path = tmp_path / ".malwi-box.yaml"
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
+        existing_file = str(tmp_path / "existing.txt")
         engine.record_decision(
             "open",
-            ("/tmp/existing.txt", "w"),
+            (existing_file, "w"),
             allowed=True,
-            details={"path": "/tmp/existing.txt", "mode": "w", "is_new_file": False},
+            details={"path": existing_file, "mode": "w", "is_new_file": False},
         )
 
         engine.save_decisions()
 
         saved_config = yaml.safe_load(config_path.read_text())
-        assert "/tmp/existing.txt" in saved_config.get("allow_modify", [])
+        # Path is converted to $PWD variable (workdir)
+        allow_modify = saved_config.get("allow_modify", [])
+        assert any("$PWD/existing.txt" in str(e) for e in allow_modify)
 
     def test_record_and_save_command_decision(self, tmp_path):
         """Test that command decisions are saved with hash."""
