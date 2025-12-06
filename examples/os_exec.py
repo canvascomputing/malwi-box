@@ -22,24 +22,22 @@ import sys
 
 
 def main():
-    print("Testing os.execv (low-level exec)")
-    print("Note: os.exec* replaces the process, so we fork first\n")
-
     # Fork to avoid replacing the current process
     pid = os.fork()
 
     if pid == 0:
         # Child process - will be replaced by exec
-        print("Child: About to exec /bin/echo...")
         try:
             os.execv("/bin/echo", ["/bin/echo", "Hello from exec!"])
         except Exception as e:
-            print(f"Child: exec failed: {e}")
+            print(f"exec failed: {e}")
             sys.exit(1)
     else:
         # Parent process - wait for child
         _, status = os.waitpid(pid, 0)
-        print(f"Parent: Child exited with status {status}")
+        exit_code = status >> 8
+        if exit_code != 0:
+            sys.exit(exit_code)
 
 
 if __name__ == "__main__":

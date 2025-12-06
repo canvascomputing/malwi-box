@@ -177,5 +177,5 @@ print("done")
             timeout=10,
             cwd=tmp_path,
         )
-        # Should see the audit prompt
-        assert "Allow?" in result.stderr or "AUDIT" in result.stderr
+        # Should see the approval prompt
+        assert "[malwi-box]" in result.stderr

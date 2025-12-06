@@ -10,8 +10,44 @@ import sys
 
 BLOCKLIST = {"builtins.input", "builtins.input/result"}
 
+# ANSI color codes
+RED = "\033[91m"
+ORANGE = "\033[93m"
+YELLOW = "\033[33m"
+RESET = "\033[0m"
+
 # Events that replace the current process - atexit handlers won't run
 PROCESS_REPLACING_EVENTS = frozenset({"os.exec", "os.posix_spawn"})
+
+# Event criticality classification
+CRITICAL_EVENTS = frozenset({
+    "socket.getaddrinfo",
+    "socket.gethostbyname",
+    "subprocess.Popen",
+    "os.exec",
+    "os.spawn",
+    "os.posix_spawn",
+    "os.system",
+    "ctypes.dlopen",
+})
+
+WARNING_EVENTS = frozenset({
+    "os.putenv",
+    "os.unsetenv",
+})
+
+
+def get_event_color(event: str, args: tuple) -> str:
+    """Get color based on event criticality."""
+    if event in CRITICAL_EVENTS:
+        return RED
+    if event in WARNING_EVENTS:
+        return ORANGE
+    if event == "open" and len(args) > 1:
+        mode = args[1] or "r"
+        if any(c in mode for c in "wax+"):
+            return ORANGE
+    return YELLOW
 
 
 def setup_hook(engine=None):
@@ -51,17 +87,19 @@ def setup_hook(engine=None):
             if engine.check_permission(event, args):
                 return
 
-            print(f"[AUDIT] {format_event(event, args)}", file=sys.stderr)
+            color = get_event_color(event, args)
+            msg = f"{color}[malwi-box] {format_event(event, args)}{RESET}"
+            print(msg, file=sys.stderr)
             try:
-                response = input("Allow? [Y/n]: ").strip().lower()
+                response = input("Approve? [Y/n]: ").strip().lower()
             except (EOFError, KeyboardInterrupt):
-                print("\nAborted.", file=sys.stderr)
+                print(f"\n{YELLOW}Aborted{RESET}", file=sys.stderr)
                 sys.stderr.flush()
                 engine.save_decisions()
                 os._exit(130)
 
             if response == "n":
-                print("Denied. Terminating.", file=sys.stderr)
+                print(f"{YELLOW}Denied{RESET}", file=sys.stderr)
                 sys.stderr.flush()
                 engine.save_decisions()
                 os._exit(1)
