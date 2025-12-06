@@ -16,6 +16,17 @@
 
 > **Warning**: This tool is not a sandbox with isolated execution, it runs on your actual machine, kernel and CPU. Use at your own risk.
 
+## Installation
+
+```bash
+pip install malwi-box
+```
+
+Or with uv:
+```bash
+uv tool install malwi-box
+```
+
 ## Commands
 
 | Command | Description |

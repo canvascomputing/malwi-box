@@ -1,10 +1,25 @@
 [project]
 name = "malwi-box"
 version = "0.1.0"
-description = "Python audit hook sandbox with C++ extension"
+description = "Intercept, audit, and block critical Python operations at runtime"
 readme = "README.md"
 requires-python = ">=3.10"
+license = {file = "LICENSE.md"}
+keywords = ["security", "audit", "sandbox", "malware", "python"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+]
 dependencies = ["pyyaml>=6.0"]
+
+[project.urls]
+Homepage = "https://github.com/canvascomputing/malwi-box"
+Repository = "https://github.com/canvascomputing/malwi-box"
 
 [project.scripts]
 malwi-box = "malwi_box.cli:main"
