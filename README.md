@@ -10,11 +10,11 @@
 
 ## Use Cases
 
-- **Malware analysis** - Observe and restrict what suspicious Python code attempts to do
-- **Supply chain security** - Audit what packages access during installation
-- **Critical systems** - Enforce least-privilege access for Python scripts
+- 🔬 **Malware analysis** - Safely detonate suspicious Python code and observe its behavior
+- 📦 **Dependency auditing** - Discover what file, network, and process access a package actually needs
+- 🔒 **Runtime protection** - Enforce allowlists to block unauthorized operations in production
 
-> **Warning**: This is tool is not a sandbox with isolated execution, it runs on your actual machine, kernel and CPU. Use at your own risk.
+> **Warning**: This tool is not a sandbox with isolated execution, it runs on your actual machine, kernel and CPU. Use at your own risk.
 
 ## Quick Start
 
