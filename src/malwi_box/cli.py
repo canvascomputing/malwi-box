@@ -99,6 +99,27 @@ def install_command(args: argparse.Namespace) -> int:
     return pip_main(pip_args)
 
 
+def config_create_command(args: argparse.Namespace) -> int:
+    """Create a default config file."""
+    import json
+
+    from malwi_box.engine import BoxEngine
+
+    path = args.path
+    if os.path.exists(path):
+        print(f"Error: {path} already exists", file=sys.stderr)
+        return 1
+
+    engine = BoxEngine(config_path=path)
+    config = engine._default_config()
+
+    with open(path, "w") as f:
+        json.dump(config, f, indent=2)
+
+    print(f"Created {path}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Python audit hook sandbox",
@@ -148,12 +169,29 @@ def main() -> int:
         help="Enable interactive approval mode",
     )
 
+    config_parser = subparsers.add_parser("config", help="Configuration management")
+    config_subparsers = config_parser.add_subparsers(
+        dest="config_subcommand", required=True
+    )
+
+    create_parser = config_subparsers.add_parser(
+        "create", help="Create default config file"
+    )
+    create_parser.add_argument(
+        "--path",
+        default=".malwi-box",
+        help="Path to config file (default: .malwi-box)",
+    )
+
     args = parser.parse_args()
 
     if args.subcommand == "run":
         return run_command(args)
     elif args.subcommand == "install":
         return install_command(args)
+    elif args.subcommand == "config":
+        if args.config_subcommand == "create":
+            return config_create_command(args)
 
     return 1
 

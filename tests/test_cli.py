@@ -52,6 +52,56 @@ class TestCLICommands:
         assert "Must specify package or -r/--requirements" in result.stderr
 
 
+class TestConfigCreate:
+    """Tests for config create subcommand."""
+
+    def test_config_create_help(self):
+        """Test that config create --help shows options."""
+        result = subprocess.run(
+            [sys.executable, "-m", "malwi_box.cli", "config", "create", "--help"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        assert "--path" in result.stdout
+
+    def test_config_create_default_path(self, tmp_path):
+        """Test creating config at default path."""
+        result = subprocess.run(
+            [sys.executable, "-m", "malwi_box.cli", "config", "create"],
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+        )
+        assert result.returncode == 0
+        assert (tmp_path / ".malwi-box").exists()
+        assert "Created" in result.stdout
+
+    def test_config_create_custom_path(self, tmp_path):
+        """Test creating config at custom path."""
+        custom = tmp_path / "custom.json"
+        result = subprocess.run(
+            [sys.executable, "-m", "malwi_box.cli", "config", "create", "--path", str(custom)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        assert custom.exists()
+
+    def test_config_create_refuses_overwrite(self, tmp_path):
+        """Test that config create refuses to overwrite existing file."""
+        config = tmp_path / ".malwi-box"
+        config.write_text("{}")
+        result = subprocess.run(
+            [sys.executable, "-m", "malwi_box.cli", "config", "create"],
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+        )
+        assert result.returncode == 1
+        assert "already exists" in result.stderr
+
+
 class TestFormatEvent:
     """Tests for _format_event function."""
 
