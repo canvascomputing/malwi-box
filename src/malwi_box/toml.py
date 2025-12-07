@@ -153,6 +153,12 @@ def loads(s: str) -> dict:
             value, pos = _parse_string(s, pos)
         elif s[pos] == "[":
             value, pos = _parse_array(s, pos)
+        elif s[pos : pos + 4] == "true":
+            value = True
+            pos += 4
+        elif s[pos : pos + 5] == "false":
+            value = False
+            pos += 5
         else:
             raise TOMLError(f"Unexpected value at position {pos}")
         result[key] = value

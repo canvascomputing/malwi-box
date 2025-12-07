@@ -28,14 +28,16 @@ def test_uninstall_stops_capturing():
 
     install_hook(hook)
     exec("x = 1")
-    count_before = len(events)
 
     uninstall_hook()
-    exec("y = 2")
-    count_after = len(events)
+    # Count AFTER uninstall completes (some events may fire during uninstall)
+    count_after_uninstall = len(events)
 
-    # No new events should be captured after uninstall
-    assert count_after == count_before
+    exec("y = 2")
+    count_after_exec = len(events)
+
+    # No new events should be captured after uninstall completes
+    assert count_after_exec == count_after_uninstall
 
 
 def test_callback_receives_event_and_args():

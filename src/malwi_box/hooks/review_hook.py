@@ -38,6 +38,7 @@ CRITICAL_EVENTS = frozenset(
         "socket.gethostbyname_ex",
         "socket.gethostbyaddr",
         "socket.connect",
+        "socket.__new__",
         "subprocess.Popen",
         "os.exec",
         "os.spawn",
@@ -46,7 +47,6 @@ CRITICAL_EVENTS = frozenset(
         "ctypes.dlopen",
         "urllib.Request",
         "http.request",
-        "http.response",
     }
 )
 

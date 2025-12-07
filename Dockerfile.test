@@ -1,0 +1,22 @@
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim
+
+WORKDIR /app
+
+# Install build dependencies for C++ extension and git (needed for tests)
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+RUN pip install uv
+
+# Copy project files
+COPY . .
+
+# Install dependencies and build
+RUN uv sync --dev
+
+# Run tests
+CMD ["uv", "run", "pytest", "tests/", "-v"]

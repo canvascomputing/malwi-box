@@ -3,9 +3,26 @@
 #include <string.h>
 #include <stdlib.h>
 
+// For Python 3.10, we need access to frame internals
+#if PY_VERSION_HEX < 0x030B0000
+#include <frameobject.h>
+#endif
+
 // Py_IsFinalizing was added in Python 3.13, use private API for older versions
 #if PY_VERSION_HEX < 0x030D0000
 #define Py_IsFinalizing() _Py_IsFinalizing()
+#endif
+
+// PyFrame_GetLocals was added in Python 3.11
+// In Python 3.10, we need to call PyFrame_FastToLocals first to populate f_locals
+#if PY_VERSION_HEX < 0x030B0000
+static inline PyObject* PyFrame_GetLocals(PyFrameObject *frame) {
+    // Force population of f_locals from fast locals
+    PyFrame_FastToLocals(frame);
+    PyObject *locals = frame->f_locals;
+    Py_XINCREF(locals);
+    return locals;
+}
 #endif
 
 // Module state structure
@@ -184,6 +201,29 @@ static void invoke_audit_callback(const char *event, PyObject *args_tuple) {
     }
 }
 
+// Helper to get item from locals (works with both dict and frame-locals proxy in Python 3.13+)
+static PyObject* get_local_item(PyObject *locals, const char *key) {
+    PyObject *result = NULL;
+    // First try dict access (fast path for Python < 3.13)
+    if (PyDict_Check(locals)) {
+        result = PyDict_GetItemString(locals, key);
+        if (result != NULL) {
+            Py_INCREF(result);  // PyDict_GetItemString returns borrowed ref
+        }
+    } else {
+        // Use mapping protocol for frame-locals proxy (Python 3.13+)
+        PyObject *key_obj = PyUnicode_FromString(key);
+        if (key_obj != NULL) {
+            result = PyObject_GetItem(locals, key_obj);
+            Py_DECREF(key_obj);
+            if (result == NULL) {
+                PyErr_Clear();  // KeyError is expected
+            }
+        }
+    }
+    return result;  // Returns new reference or NULL
+}
+
 // Extract URL and method from frame locals and report http.request event
 static void extract_and_report_http_request(PyFrameObject *frame) {
     PyObject *locals = PyFrame_GetLocals(frame);
@@ -193,11 +233,12 @@ static void extract_and_report_http_request(PyFrameObject *frame) {
     PyObject *method = NULL;
 
     // Try common parameter names for URL
-    url = PyDict_GetItemString(locals, "url");
-    if (url == NULL) url = PyDict_GetItemString(locals, "fullurl");
+    url = get_local_item(locals, "url");
+    if (url == NULL) url = get_local_item(locals, "fullurl");
+    if (url == NULL) url = get_local_item(locals, "str_or_url");  // aiohttp
 
     // Try common parameter names for method
-    method = PyDict_GetItemString(locals, "method");
+    method = get_local_item(locals, "method");
 
     // Convert URL object to string if needed (httpx uses URL objects)
     PyObject *url_str = NULL;
@@ -213,16 +254,13 @@ static void extract_and_report_http_request(PyFrameObject *frame) {
 
     if (url_str != NULL) {
         PyObject *method_str = NULL;
-        int created_method = 0;
         if (method == NULL) {
             method_str = PyUnicode_FromString("GET");
-            created_method = 1;
         } else if (PyUnicode_Check(method)) {
             method_str = method;
             Py_INCREF(method_str);
         } else {
             method_str = PyObject_Str(method);
-            created_method = 1;
         }
 
         if (method_str != NULL) {
@@ -237,6 +275,97 @@ static void extract_and_report_http_request(PyFrameObject *frame) {
         Py_DECREF(url_str);
     }
 
+    // Cleanup - get_local_item returns new references
+    Py_XDECREF(url);
+    Py_XDECREF(method);
+    Py_DECREF(locals);
+}
+
+// Extract URL from http.client HTTPConnection.request
+// The URL parameter only contains the path, host/port are on self
+static void extract_http_client_request(PyFrameObject *frame) {
+    PyObject *locals = PyFrame_GetLocals(frame);
+    if (locals == NULL) return;
+
+    PyObject *self_obj = get_local_item(locals, "self");
+    PyObject *method = get_local_item(locals, "method");
+    PyObject *path = get_local_item(locals, "url");
+
+    if (self_obj == NULL) {
+        Py_XDECREF(method);
+        Py_XDECREF(path);
+        Py_DECREF(locals);
+        return;
+    }
+
+    // Get host and port from self
+    PyObject *host = PyObject_GetAttrString(self_obj, "host");
+    PyObject *port = PyObject_GetAttrString(self_obj, "port");
+
+    if (host == NULL) {
+        Py_XDECREF(port);
+        Py_XDECREF(self_obj);
+        Py_XDECREF(method);
+        Py_XDECREF(path);
+        Py_DECREF(locals);
+        return;
+    }
+
+    // Determine scheme by checking class name for HTTPS
+    const char *scheme = "http";
+    PyObject *cls = PyObject_GetAttrString(self_obj, "__class__");
+    if (cls != NULL) {
+        PyObject *cls_name = PyObject_GetAttrString(cls, "__name__");
+        if (cls_name != NULL && PyUnicode_Check(cls_name)) {
+            const char *name = PyUnicode_AsUTF8(cls_name);
+            if (name != NULL && strstr(name, "HTTPS") != NULL) {
+                scheme = "https";
+            }
+        }
+        Py_XDECREF(cls_name);
+        Py_DECREF(cls);
+    }
+
+    // Build full URL: scheme://host:port/path
+    const char *host_str = PyUnicode_Check(host) ? PyUnicode_AsUTF8(host) : "";
+    const char *path_str = (path != NULL && PyUnicode_Check(path)) ? PyUnicode_AsUTF8(path) : "/";
+    long port_num = (port != NULL && PyLong_Check(port)) ? PyLong_AsLong(port) : 0;
+
+    char url_buf[2048];
+    if (port_num > 0 && port_num != 80 && port_num != 443) {
+        snprintf(url_buf, sizeof(url_buf), "%s://%s:%ld%s", scheme, host_str, port_num, path_str);
+    } else {
+        snprintf(url_buf, sizeof(url_buf), "%s://%s%s", scheme, host_str, path_str);
+    }
+
+    PyObject *url_str = PyUnicode_FromString(url_buf);
+    if (url_str != NULL) {
+        PyObject *method_str = NULL;
+        if (method == NULL) {
+            method_str = PyUnicode_FromString("GET");
+        } else if (PyUnicode_Check(method)) {
+            method_str = method;
+            Py_INCREF(method_str);
+        } else {
+            method_str = PyObject_Str(method);
+        }
+
+        if (method_str != NULL) {
+            PyObject *args = PyTuple_Pack(2, url_str, method_str);
+            if (args != NULL) {
+                invoke_audit_callback("http.request", args);
+                Py_DECREF(args);
+            }
+            Py_DECREF(method_str);
+        }
+        Py_DECREF(url_str);
+    }
+
+    Py_DECREF(host);
+    Py_XDECREF(port);
+    Py_DECREF(self_obj);
+    Py_XDECREF(method);
+    Py_XDECREF(path);
     Py_DECREF(locals);
 }
 
@@ -271,15 +400,30 @@ static void check_http_function_call(PyFrameObject *frame) {
             is_http_func = 1;
         }
     } else if (streq(func_name, "request")) {
-        // requests Session.request or httpx Client.request
+        // requests Session.request, httpx Client.request, or http.client HTTPConnection.request
         if (strstr(filename, "requests/sessions.py") != NULL ||
-            strstr(filename, "httpx/_client.py") != NULL) {
+            strstr(filename, "httpx/_client.py") != NULL ||
+            strstr(filename, "http/client.py") != NULL) {
+            is_http_func = 1;
+        }
+    } else if (streq(func_name, "_request")) {
+        // aiohttp ClientSession._request
+        if (strstr(filename, "aiohttp/client.py") != NULL) {
             is_http_func = 1;
         }
     }
 
+    int is_http_client = 0;
+    if (is_http_func && strstr(filename, "http/client.py") != NULL) {
+        is_http_client = 1;
+    }
+
     if (is_http_func) {
-        extract_and_report_http_request(frame);
+        if (is_http_client) {
+            extract_http_client_request(frame);
+        } else {
+            extract_and_report_http_request(frame);
+        }
     }
 
     Py_DECREF(code);

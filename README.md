@@ -132,10 +132,8 @@ allow_http_urls = [
 # HTTP methods allowed (optional, empty = all methods)
 allow_http_methods = ["GET", "POST", "HEAD"]
 
-# Response payload hash verification (optional)
-allow_http_payload_hashes = [
-  { url = "example.com/file.tar.gz", hash = "sha256:abc123..." },
-]
+# Raw socket access (default: false, blocks SOCK_RAW creation)
+allow_raw_sockets = false
 
 # Process execution
 allow_executables = [
@@ -195,24 +193,16 @@ The following paths are automatically blocked even if they match an allow rule:
 - If `allow_http_methods` is empty, all HTTP methods are allowed
 - If configured, only listed methods are permitted (e.g., `["GET", "HEAD"]`)
 
-### Payload Hash Verification
-- Verify downloaded content matches expected SHA256 hash
-- Works with `requests`, `httpx`, `urllib3`, and stdlib `urllib`
-- Configure via `allow_http_payload_hashes` with `{url, hash}` entries
-- URL patterns support globs: `*/releases/*.whl`
+### HTTP Library Coverage
+HTTP request interception covers:
+- `urllib.request` (stdlib)
+- `http.client` (stdlib)
+- `urllib3`
+- `requests`
+- `httpx`
+- `aiohttp`
 
-Example: restrict API access and verify downloaded artifacts:
-```toml
-allow_domains = ["api.example.com", "releases.example.com"]
-allow_http_urls = [
-  "api.example.com/v1/*",
-  "releases.example.com/artifacts/*",
-]
-allow_http_methods = ["GET", "POST"]
-allow_http_payload_hashes = [
-  { url = "releases.example.com/artifacts/app.tar.gz", hash = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
-]
-```
+**Bypass note:** Raw socket HTTP requests bypass library hooks but are blocked by default (`allow_raw_sockets = false`). The `socket.connect` event still captures all connections at the network level.
 
 ### Hash Verification
 Executables and files can include SHA256 hashes:
@@ -227,9 +217,10 @@ allow_executables = [
 Uses Python's PEP 578 audit hooks via a C++ extension to intercept:
 - File operations (`open`)
 - Network requests (`socket.connect`, `socket.getaddrinfo`)
-- HTTP requests (`urllib.Request` + library hooks for `requests`, `httpx`, `urllib3`)
+- HTTP requests (`urllib.Request` + profile hooks for `requests`, `httpx`, `urllib3`, `aiohttp`, `http.client`)
 - Process execution (`subprocess.Popen`, `os.exec*`, `os.system`)
 - Library loading (`ctypes.dlopen`)
+- Raw socket creation (`socket.__new__` with `SOCK_RAW`)
 
 **Protections against bypass:**
 - Blocks `sys.addaudithook` to prevent registering competing hooks

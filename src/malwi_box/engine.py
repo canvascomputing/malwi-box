@@ -236,7 +236,7 @@ class BoxEngine:
             "allow_ips": [],  # CIDR notation supported
             "allow_http_urls": [],  # URL path patterns (e.g., "api.example.com/v1/*")
             "allow_http_methods": [],  # HTTP methods (e.g., ["GET", "POST"])
-            "allow_http_payload_hashes": [],  # Response verification: [{url, hash}]
+            "allow_raw_sockets": False,  # Block raw socket creation by default
         }
 
     def _load_config(self) -> dict[str, Any]:
@@ -946,8 +946,29 @@ class BoxEngine:
             return self._check_url_request(args)
         elif event == "http.request":
             return self._check_http_request(args)
+        elif event == "socket.__new__":
+            return self._check_raw_socket(args)
 
         # Events not explicitly handled are allowed
+        return True
+
+    def _check_raw_socket(self, args: tuple) -> bool:
+        """Check if raw socket creation is permitted.
+
+        Args:
+            args: (family, type, proto) from socket.__new__ event
+                  SOCK_RAW = 3
+
+        Returns:
+            True if allowed, False otherwise.
+        """
+        import socket
+
+        if len(args) >= 2:
+            sock_type = args[1]
+            # Check for SOCK_RAW (value 3)
+            if sock_type == socket.SOCK_RAW:
+                return self.config.get("allow_raw_sockets", False)
         return True
 
     def _violation(self, reason: str) -> None:
@@ -1104,21 +1125,6 @@ class BoxEngine:
                     method_upper = method.upper()
                     if method_upper not in config.get("allow_http_methods", []):
                         config.setdefault("allow_http_methods", []).append(method_upper)
-
-            elif event == "http.response":
-                url_pattern = details.get("url")
-                payload_hash = details.get("hash")
-                if url_pattern and payload_hash:
-                    entry = {"url": url_pattern, "hash": payload_hash}
-                    existing = config.get("allow_http_payload_hashes", [])
-                    # Check if already exists
-                    has_url = any(
-                        e.get("url") == url_pattern
-                        for e in existing
-                        if isinstance(e, dict)
-                    )
-                    if not has_url:
-                        config.setdefault("allow_http_payload_hashes", []).append(entry)
 
         # Write updated config
         try:

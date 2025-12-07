@@ -113,9 +113,13 @@ def format_event(event: str, args: tuple) -> str:
         method = args[1] if len(args) > 1 else "GET"
         return f"HTTP {method}: {_truncate(str(url), MAX_CMD_LEN)}"
 
-    if event == "http.response":
-        url = args[0] if args else "?"
-        return f"HTTP Response: {_truncate(str(url), MAX_CMD_LEN)}"
+    if event == "socket.__new__":
+        # Raw socket creation - args: (family, type, proto)
+        import socket
+
+        if len(args) >= 2 and args[1] == socket.SOCK_RAW:
+            return "Raw socket creation"
+        return f"Socket: {args}"
 
     return f"{event}: {args}"
 
@@ -190,10 +194,13 @@ def extract_decision_details(event: str, args: tuple) -> dict:
         details["url"] = str(args[0]) if args else ""
         details["method"] = str(args[1]) if len(args) > 1 else "GET"
 
-    elif event == "http.response":
-        # args: (url, hash)
-        details["url"] = str(args[0]) if args else ""
-        details["hash"] = str(args[1]) if len(args) > 1 else ""
+    elif event == "socket.__new__":
+        # args: (family, type, proto)
+        import socket
+
+        if len(args) >= 2:
+            is_raw = args[1] == socket.SOCK_RAW
+            details["socket_type"] = "SOCK_RAW" if is_raw else str(args[1])
 
     return details
 
