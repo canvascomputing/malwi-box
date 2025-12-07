@@ -174,9 +174,13 @@ allow_env_var_reads = ["$SAFE_ENV_VARS"]  # variable for safe env vars
 allow_env_var_writes = ["PATH", "PYTHONPATH"]
 ```
 
-### Path Variables
-| Variable | Description |
-|----------|-------------|
+### Variables
+
+Variables can be used in config values and are expanded at runtime.
+
+| Variable | Expands To |
+|----------|------------|
+| **Path variables** | |
 | `$PWD` | Working directory |
 | `$HOME` | User home directory |
 | `$TMPDIR` | System temp directory (macOS: `/var/folders/.../T`, Linux: `/tmp`) |
@@ -188,12 +192,7 @@ allow_env_var_writes = ["PATH", "PYTHONPATH"]
 | `$PYTHON_PLATLIB` | Platform-specific packages |
 | `$PYTHON_PREFIX` | Python installation prefix |
 | `$ENV{VAR}` | Any environment variable |
-
-### List Variables
-These expand to multiple values for convenience:
-
-| Variable | Expands To |
-|----------|------------|
+| **List variables** | *Expand to multiple values* |
 | `$PYPI_DOMAINS` | `pypi.org`, `files.pythonhosted.org` |
 | `$LOCALHOST` | `127.0.0.1`, `::1`, `localhost` |
 | `$ALL_HTTP_METHODS` | `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD`, `OPTIONS` |
@@ -219,22 +218,23 @@ All `allow_*` attributes consistently block when empty. Use variables to documen
 | `allow_env_var_reads` | Block all | `$SAFE_ENV_VARS` |
 | `allow_env_var_writes` | Block all | `$SAFE_ENV_VARS` |
 
-### Sensitive Paths (Always Blocked)
-The following paths are automatically blocked even if they match an allow rule:
-- SSH keys and GPG (`~/.ssh`, `~/.gnupg`)
-- Cloud credentials (`~/.aws`, `~/.azure`, `~/.config/gcloud`, `~/.kube`)
-- Browser data (Chrome, Firefox, Safari, Edge)
-- Password managers (1Password, Bitwarden, KeePassXC, keychains)
-- Development secrets (`~/.npmrc`, `~/.pypirc`, `~/.netrc`, `~/.git-credentials`)
-- System secrets (`/etc/shadow`, `/etc/sudoers`, `/etc/ssh/*_key`)
-
 ### Network Behavior
 - Domains in `allow_domains` automatically permit their resolved IPs
 - Direct IP access requires explicit `allow_ips` entries
 - CIDR notation supported for IP ranges
 - Port restrictions supported for both domains and IPs
 
-### HTTP URL Path Allowlisting
+### HTTP Request Interception
+
+Supported libraries:
+- `urllib.request` (stdlib)
+- `http.client` (stdlib)
+- `urllib3`
+- `requests`
+- `httpx`
+- `aiohttp`
+
+**URL allowlisting:**
 - If `allow_http_urls` is empty, all HTTP requests are blocked
 - Default uses `$PYPI_DOMAINS/*` to allow pip install
 - Requests must match both domain AND URL pattern
@@ -242,19 +242,10 @@ The following paths are automatically blocked even if they match an allow rule:
 - Glob patterns supported for paths: `api.example.com/v1/*`
 - Subdomain matching: `example.com/api/*` matches `api.example.com/api/*`
 
-### HTTP Method Restrictions
+**Method restrictions:**
 - If `allow_http_methods` is empty, all HTTP requests are blocked
 - Default uses `$ALL_HTTP_METHODS` to allow all standard methods
 - If configured, only listed methods are permitted (e.g., `["GET", "HEAD"]`)
-
-### HTTP Library Coverage
-HTTP request interception covers:
-- `urllib.request` (stdlib)
-- `http.client` (stdlib)
-- `urllib3`
-- `requests`
-- `httpx`
-- `aiohttp`
 
 **Bypass note:** Raw socket HTTP requests bypass library hooks but are blocked by default (`allow_raw_sockets = false`). The `socket.connect` event still captures all connections at the network level.
 
