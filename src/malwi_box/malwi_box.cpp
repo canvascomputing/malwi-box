@@ -212,19 +212,19 @@ static void AuditedEnviron_dealloc(AuditedEnvironObject *self) {
     Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
-// Type definition
+// Type definition - using correct field order for GCC compatibility
 static PyTypeObject AuditedEnvironType = {
     PyVarObject_HEAD_INIT(NULL, 0)
     .tp_name = "malwi_box.AuditedEnviron",
-    .tp_doc = "Audited environment wrapper",
     .tp_basicsize = sizeof(AuditedEnvironObject),
     .tp_itemsize = 0,
-    .tp_flags = Py_TPFLAGS_DEFAULT,
     .tp_dealloc = (destructor)AuditedEnviron_dealloc,
     .tp_repr = (reprfunc)AuditedEnviron_repr,
-    .tp_str = (reprfunc)AuditedEnviron_str,
-    .tp_as_mapping = &AuditedEnviron_as_mapping,
     .tp_as_sequence = &AuditedEnviron_as_sequence,
+    .tp_as_mapping = &AuditedEnviron_as_mapping,
+    .tp_str = (reprfunc)AuditedEnviron_str,
+    .tp_flags = Py_TPFLAGS_DEFAULT,
+    .tp_doc = "Audited environment wrapper",
     .tp_iter = (getiterfunc)AuditedEnviron_iter,
     .tp_methods = AuditedEnviron_methods,
 };
