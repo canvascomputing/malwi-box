@@ -13,11 +13,54 @@ from urllib.parse import urlparse
 
 from malwi_box import toml
 
-# PyPI-related domains for default allow_domains
-PYPI_DOMAINS = [
-    "pypi.org",
-    "files.pythonhosted.org",
-]
+# List variable expansion for config values
+# Similar to path variables but expand to multiple values
+LIST_VARIABLES: dict[str, list[str]] = {
+    # PyPI infrastructure - for pip install
+    "$PYPI_DOMAINS": [
+        "pypi.org",
+        "files.pythonhosted.org",
+    ],
+    # Localhost addresses - IPv4, IPv6, and hostname
+    "$LOCALHOST": [
+        "127.0.0.1",  # IPv4 loopback
+        "::1",  # IPv6 loopback
+        "localhost",  # Hostname
+    ],
+    # Standard HTTP methods - RFC 7231 + PATCH (RFC 5789)
+    "$ALL_HTTP_METHODS": [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE",
+        "PATCH",
+        "HEAD",
+        "OPTIONS",
+    ],
+    # Safe environment variables - non-sensitive system/shell vars
+    "$SAFE_ENV_VARS": [
+        # Shell environment
+        "PATH",
+        "HOME",
+        "USER",
+        "SHELL",
+        "TERM",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        # Working directories
+        "PWD",
+        "OLDPWD",
+        # Temporary directories
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        # Python environment
+        "PYTHONPATH",
+        "VIRTUAL_ENV",
+        "CONDA_PREFIX",
+    ],
+}
 
 # Events that can execute native binaries or load shared libraries
 EXEC_EVENTS = frozenset(
@@ -223,8 +266,13 @@ class BoxEngine:
         self._in_resolution = False  # Guard against recursive DNS resolution
 
     def _default_config(self) -> dict[str, Any]:
-        """Return default configuration with pip-friendly permissions."""
+        """Return default configuration with pip-friendly permissions.
+
+        Uses variables like $PYPI_DOMAINS to document what's allowed.
+        All allow_* lists block when empty.
+        """
         return {
+            # File access
             "allow_read": [
                 "$PWD",
                 "$PYTHON_STDLIB",
@@ -236,16 +284,20 @@ class BoxEngine:
             ],
             "allow_create": ["$PWD", "$TMPDIR", "$PIP_CACHE"],
             "allow_modify": ["$TMPDIR", "$PIP_CACHE"],
-            "allow_delete": [],
-            "allow_env_var_reads": [],
-            "allow_env_var_writes": [],
-            "allow_domains": PYPI_DOMAINS.copy(),
-            "allow_executables": [],  # Block all by default, use ["*"] to allow all
-            "allow_shell_commands": [],  # Block all by default, use ["*"] to allow all
-            "allow_ips": [],  # CIDR notation supported
-            "allow_http_urls": [],  # URL path patterns (e.g., "api.example.com/v1/*")
-            "allow_http_methods": [],  # HTTP methods (e.g., ["GET", "POST"])
-            "allow_raw_sockets": False,  # Block raw socket creation by default
+            "allow_delete": ["$TMPDIR", "$PIP_CACHE"],
+            # Network - using $PYPI_DOMAINS variable
+            "allow_domains": ["$PYPI_DOMAINS"],
+            "allow_ips": ["$LOCALHOST"],
+            "allow_http_urls": ["$PYPI_DOMAINS/*"],
+            "allow_http_methods": ["$ALL_HTTP_METHODS"],
+            # Execution - empty = block all
+            "allow_executables": [],
+            "allow_shell_commands": [],
+            # Environment
+            "allow_env_var_reads": ["$SAFE_ENV_VARS"],
+            "allow_env_var_writes": ["$SAFE_ENV_VARS"],
+            # Sockets
+            "allow_raw_sockets": False,
         }
 
     def _load_config(self) -> dict[str, Any]:
@@ -325,6 +377,31 @@ class BoxEngine:
 
         result = re.sub(r"\$ENV\{([^}]+)\}", env_replace, result)
 
+        return result
+
+    def _expand_list_variable(self, entry: str) -> list[str]:
+        """Expand list variables like $PYPI_DOMAINS, $LOCALHOST, etc.
+
+        Returns a list of expanded values, or [entry] if no expansion needed.
+        """
+        # Check for exact match first
+        if entry in LIST_VARIABLES:
+            return LIST_VARIABLES[entry]
+
+        # Check for pattern like "$PYPI_DOMAINS/*"
+        for var, values in LIST_VARIABLES.items():
+            if entry.startswith(var):
+                suffix = entry[len(var):]
+                return [v + suffix for v in values]
+
+        return [entry]
+
+    def _expand_config_list(self, config_key: str) -> list[str]:
+        """Get config list with all variables expanded."""
+        entries = self.config.get(config_key, [])
+        result = []
+        for entry in entries:
+            result.extend(self._expand_list_variable(entry))
         return result
 
     def _path_to_variable(self, path: str) -> str:
@@ -521,6 +598,30 @@ class BoxEngine:
             path, self.config.get("allow_modify", []), check_hash=True
         )
 
+    def _check_delete_permission(self, path: Path) -> bool:
+        """Check if deleting a file is permitted."""
+        # Always block sensitive paths
+        if self._is_sensitive_path(path):
+            return False
+        return self._check_path_permission(path, self.config.get("allow_delete", []))
+
+    def _check_file_delete(self, args: tuple) -> bool:
+        """Check file deletion permission for 'os.remove'/'os.unlink' events."""
+        if not args:
+            return True
+
+        path_arg = args[0]
+
+        # Handle non-string paths
+        if not isinstance(path_arg, (str, Path, bytes)):
+            return True
+
+        if isinstance(path_arg, bytes):
+            path_arg = path_arg.decode("utf-8", errors="replace")
+
+        resolved = self._resolve_path(path_arg)
+        return self._check_delete_permission(resolved)
+
     def _check_file_access(self, args: tuple) -> bool:
         """Check file access permission for 'open' event."""
         if not args:
@@ -688,8 +789,8 @@ class BoxEngine:
         if not host or not isinstance(host, str):
             return True
 
-        # Check allowed domains
-        for entry in self.config.get("allow_domains", []):
+        # Check allowed domains (expand variables like $PYPI_DOMAINS)
+        for entry in self._expand_config_list("allow_domains"):
             allowed_domain, allowed_port = self._parse_domain_entry(entry)
 
             if host == allowed_domain or host.endswith("." + allowed_domain):
@@ -774,10 +875,15 @@ class BoxEngine:
         except ValueError:
             return False
 
-        # Check static allow_ips config
-        for entry in self.config.get("allow_ips", []):
+        # Check static allow_ips config (expand variables like $LOCALHOST)
+        for entry in self._expand_config_list("allow_ips"):
             allowed_ip, allowed_port = self._parse_ip_entry(entry)
             if allowed_port is not None and port != allowed_port:
+                continue
+            # Handle "localhost" hostname
+            if allowed_ip == "localhost":
+                if ip in ("127.0.0.1", "::1"):
+                    return True
                 continue
             try:
                 network = ipaddress.ip_network(allowed_ip, strict=False)
@@ -885,20 +991,20 @@ class BoxEngine:
         if not url or not isinstance(url, str):
             return True
 
-        # Check HTTP method restrictions
+        # Check HTTP method restrictions (expand variables like $ALL_HTTP_METHODS)
         method = args[3] if len(args) > 3 else (args[1] if len(args) > 1 else None)
         if isinstance(method, str):
-            allowed_methods = self.config.get("allow_http_methods", [])
+            allowed_methods = self._expand_config_list("allow_http_methods")
+            if not allowed_methods:
+                return False  # Empty = block all methods
             upper_allowed = [m.upper() for m in allowed_methods]
-            if allowed_methods and method.upper() not in upper_allowed:
+            if method.upper() not in upper_allowed:
                 return False
 
-        allow_urls = self.config.get("allow_http_urls", [])
-
-        # If allow_http_urls is empty, fall back to domain-only mode
-        # (domain checking happens at socket level via allow_domains)
+        # Check URL patterns (expand variables like $PYPI_DOMAINS/*)
+        allow_urls = self._expand_config_list("allow_http_urls")
         if not allow_urls:
-            return True
+            return False  # Empty = block all URLs
 
         # Check against URL patterns
         return any(self._url_matches_pattern(url, pattern) for pattern in allow_urls)
@@ -927,6 +1033,8 @@ class BoxEngine:
         # Map events to handlers
         if event == "open":
             return self._check_file_access(args)
+        elif event in ("os.remove", "os.unlink"):
+            return self._check_file_delete(args)
         elif event in ("os.putenv", "os.unsetenv"):
             return self._check_env_write(args)
         elif event in ("os.getenv", "os.environ.get"):
@@ -1145,17 +1253,28 @@ class BoxEngine:
     def _check_env_read(self, args: tuple) -> bool:
         """Check if reading an env var is allowed.
 
-        The args tuple contains the function object being called.
-        We can't easily get the key being accessed, so we allow by default
-        unless the user has restricted env var reads.
+        Args:
+            args: (key,) - the environment variable name
 
-        Note: Sensitive env vars are always blocked.
+        Returns:
+            True if allowed, False otherwise.
         """
+        if not args:
+            return True
+
+        key = args[0]
+        if isinstance(key, bytes):
+            key = key.decode("utf-8", errors="replace")
+
+        # Sensitive env vars are always blocked
+        if self._is_sensitive_env_var(key):
+            return False
+
         allowed = self.config.get("allow_env_var_reads", [])
-        # If no restrictions configured, allow all
-        # If restrictions are configured, block by default
-        # (The actual key is not easily accessible from the profile hook)
-        return not allowed
+        if not allowed:
+            return False  # Empty = block all
+
+        return key in allowed
 
     def create_hook(self, enforce: bool = True) -> callable:
         """Return a hook function that uses this engine.

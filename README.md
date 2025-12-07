@@ -125,7 +125,10 @@ allow_modify = [
   { path = "/etc/myapp.conf", hash = "sha256:abc123..." },
 ]
 
-allow_delete = []             # no deletions allowed
+allow_delete = [
+  "$TMPDIR",                  # allow temp cleanup
+  "$PIP_CACHE",               # allow pip cache cleanup
+]
 
 # Network permissions
 allow_domains = [
@@ -140,15 +143,16 @@ allow_ips = [
   "[::1]:443",                # IPv6 with port
 ]
 
-# HTTP URL path restrictions (optional, empty = domain-only mode)
+# HTTP URL path restrictions (empty = block all)
 allow_http_urls = [
+  "$PYPI_DOMAINS/*",              # use variable for PyPI URLs
   "api.example.com/v1/*",         # glob pattern for paths
   "cdn.example.com/assets/*",
   "https://secure.example.com/*", # explicit scheme
 ]
 
-# HTTP methods allowed (optional, empty = all methods)
-allow_http_methods = ["GET", "POST", "HEAD"]
+# HTTP methods allowed (empty = block all)
+allow_http_methods = ["$ALL_HTTP_METHODS"]  # variable for all standard methods
 
 # Raw socket access (default: false, blocks SOCK_RAW creation)
 allow_raw_sockets = false
@@ -165,8 +169,8 @@ allow_shell_commands = [
   "/usr/bin/curl *",
 ]
 
-# Environment variables
-allow_env_var_reads = []      # restrict env access
+# Environment variables (empty = block all)
+allow_env_var_reads = ["$SAFE_ENV_VARS"]  # variable for safe env vars
 allow_env_var_writes = ["PATH", "PYTHONPATH"]
 ```
 
@@ -185,6 +189,36 @@ allow_env_var_writes = ["PATH", "PYTHONPATH"]
 | `$PYTHON_PREFIX` | Python installation prefix |
 | `$ENV{VAR}` | Any environment variable |
 
+### List Variables
+These expand to multiple values for convenience:
+
+| Variable | Expands To |
+|----------|------------|
+| `$PYPI_DOMAINS` | `pypi.org`, `files.pythonhosted.org` |
+| `$LOCALHOST` | `127.0.0.1`, `::1`, `localhost` |
+| `$ALL_HTTP_METHODS` | `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD`, `OPTIONS` |
+| `$SAFE_ENV_VARS` | `PATH`, `HOME`, `USER`, `SHELL`, `TERM`, `LANG`, `LC_ALL`, `LC_CTYPE`, `PWD`, `OLDPWD`, `TMPDIR`, `TMP`, `TEMP`, `PYTHONPATH`, `VIRTUAL_ENV`, `CONDA_PREFIX` |
+
+List variables can be combined with patterns: `$PYPI_DOMAINS/*` expands to `pypi.org/*`, `files.pythonhosted.org/*`.
+
+### Allowlist Behavior
+All `allow_*` attributes consistently block when empty. Use variables to document what's being allowed:
+
+| Attribute | Empty Behavior | Default |
+|-----------|---------------|---------|
+| `allow_read` | Block all | `$PWD`, `$PYTHON_STDLIB`, `$PYTHON_SITE_PACKAGES`, `$PYTHON_PLATLIB`, `$PIP_CACHE`, `$TMPDIR`, `$CACHE_HOME` |
+| `allow_create` | Block all | `$PWD`, `$TMPDIR`, `$PIP_CACHE` |
+| `allow_modify` | Block all | `$TMPDIR`, `$PIP_CACHE` |
+| `allow_delete` | Block all | `$TMPDIR`, `$PIP_CACHE` |
+| `allow_domains` | Block all | `$PYPI_DOMAINS` |
+| `allow_ips` | Block all | `$LOCALHOST` |
+| `allow_http_urls` | Block all | `$PYPI_DOMAINS/*` |
+| `allow_http_methods` | Block all | `$ALL_HTTP_METHODS` |
+| `allow_executables` | Block all | (none) |
+| `allow_shell_commands` | Block all | (none) |
+| `allow_env_var_reads` | Block all | `$SAFE_ENV_VARS` |
+| `allow_env_var_writes` | Block all | `$SAFE_ENV_VARS` |
+
 ### Sensitive Paths (Always Blocked)
 The following paths are automatically blocked even if they match an allow rule:
 - SSH keys and GPG (`~/.ssh`, `~/.gnupg`)
@@ -201,14 +235,16 @@ The following paths are automatically blocked even if they match an allow rule:
 - Port restrictions supported for both domains and IPs
 
 ### HTTP URL Path Allowlisting
-- If `allow_http_urls` is empty, only domain-level checks apply (default behavior)
-- If `allow_http_urls` is configured, requests must match both domain AND URL pattern
+- If `allow_http_urls` is empty, all HTTP requests are blocked
+- Default uses `$PYPI_DOMAINS/*` to allow pip install
+- Requests must match both domain AND URL pattern
 - Scheme (`http://`, `https://`) is optional in patterns - omit to match both
 - Glob patterns supported for paths: `api.example.com/v1/*`
 - Subdomain matching: `example.com/api/*` matches `api.example.com/api/*`
 
 ### HTTP Method Restrictions
-- If `allow_http_methods` is empty, all HTTP methods are allowed
+- If `allow_http_methods` is empty, all HTTP requests are blocked
+- Default uses `$ALL_HTTP_METHODS` to allow all standard methods
 - If configured, only listed methods are permitted (e.g., `["GET", "HEAD"]`)
 
 ### HTTP Library Coverage

@@ -11,16 +11,17 @@ class TestConfigLoading:
         """Test that default config is used when no file exists."""
         engine = BoxEngine(config_path=tmp_path / ".malwi-box.toml", workdir=tmp_path)
 
-        # Default config includes PyPI domains
-        assert "pypi.org" in engine.config["allow_domains"]
-        assert "files.pythonhosted.org" in engine.config["allow_domains"]
+        # Default config uses variable $PYPI_DOMAINS (expands to pypi.org, files.pythonhosted.org)
+        assert "$PYPI_DOMAINS" in engine.config["allow_domains"]
         # Default config uses variables like $PWD which get expanded at runtime
         assert "$PWD" in engine.config["allow_read"]
         assert "$PWD" in engine.config["allow_create"]
         # Pip-friendly defaults allow modify in temp dirs
         assert "$TMPDIR" in engine.config["allow_modify"]
         assert "$PIP_CACHE" in engine.config["allow_modify"]
-        assert engine.config["allow_delete"] == []
+        # Delete is allowed in temp dirs by default
+        assert "$TMPDIR" in engine.config["allow_delete"]
+        assert "$PIP_CACHE" in engine.config["allow_delete"]
 
     def test_load_config_from_file(self, tmp_path):
         """Test loading config from YAML file."""
@@ -1120,16 +1121,16 @@ class TestDomainIPResolution:
 class TestURLPermissions:
     """Tests for URL path allowlisting via urllib.Request event."""
 
-    def test_url_allow_empty_allows_all(self, tmp_path):
-        """Test that empty allow_urls allows all URLs (domain-only mode)."""
-        config = {"allow_urls": []}
+    def test_url_allow_empty_blocks_all(self, tmp_path):
+        """Test that empty allow_http_urls blocks all URLs (consistent behavior)."""
+        config = {"allow_http_urls": []}
         config_path = tmp_path / ".malwi-box.toml"
         config_path.write_text(toml.dumps(config))
 
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
-        # Empty allow_urls = domain-only mode, all URLs allowed at this level
-        assert engine.check_permission(
+        # Empty allow_http_urls = block all URLs (consistent with all allow_* attrs)
+        assert not engine.check_permission(
             "urllib.Request", ("https://example.com/any/path", None, {}, None)
         )
 
