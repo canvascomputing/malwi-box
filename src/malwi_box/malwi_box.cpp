@@ -43,8 +43,243 @@ static PyObject *g_module = NULL;
 
 // Cached references for env var monitoring
 static PyObject *g_os_module = NULL;
-static PyObject *g_os_getenv = NULL;
-static PyObject *g_os_environ = NULL;
+static PyObject *g_os_getenv_original = NULL;
+static PyObject *g_os_environ_original = NULL;
+
+// Re-entrancy guard for env var events (prevents double-firing when os.getenv calls os.environ.get)
+static int g_in_env_callback = 0;
+
+// =============================================================================
+// AuditedEnviron: C-level wrapper for os.environ that fires audit events
+// =============================================================================
+
+typedef struct {
+    PyObject_HEAD
+    PyObject *wrapped;  // Original os.environ
+} AuditedEnvironObject;
+
+// Helper to invoke audit callback (forward declaration, defined below)
+static void invoke_audit_callback(const char *event, PyObject *args_tuple);
+
+// AuditedEnviron.__getitem__(key) - fires audit event on environ[key]
+static PyObject *AuditedEnviron_subscript(AuditedEnvironObject *self, PyObject *key) {
+    // Fire audit event with the key (unless already in an env callback)
+    if (!g_in_env_callback) {
+        g_in_env_callback = 1;
+        PyObject *args = PyTuple_Pack(1, key);
+        if (args != NULL) {
+            invoke_audit_callback("os.environ.get", args);
+            Py_DECREF(args);
+        }
+        g_in_env_callback = 0;
+    }
+    // Delegate to wrapped environ
+    return PyObject_GetItem(self->wrapped, key);
+}
+
+// AuditedEnviron.__setitem__(key, value)
+static int AuditedEnviron_ass_subscript(AuditedEnvironObject *self, PyObject *key, PyObject *value) {
+    if (value == NULL) {
+        // Deletion: environ.__delitem__(key)
+        return PyObject_DelItem(self->wrapped, key);
+    }
+    // Set: environ.__setitem__(key, value)
+    return PyObject_SetItem(self->wrapped, key, value);
+}
+
+// AuditedEnviron.__len__()
+static Py_ssize_t AuditedEnviron_length(AuditedEnvironObject *self) {
+    return PyObject_Size(self->wrapped);
+}
+
+// Mapping methods for subscript access
+static PyMappingMethods AuditedEnviron_as_mapping = {
+    (lenfunc)AuditedEnviron_length,           // mp_length
+    (binaryfunc)AuditedEnviron_subscript,     // mp_subscript (__getitem__)
+    (objobjargproc)AuditedEnviron_ass_subscript,  // mp_ass_subscript (__setitem__/__delitem__)
+};
+
+// AuditedEnviron.get(key, default=None) - fires audit event
+static PyObject *AuditedEnviron_get(AuditedEnvironObject *self, PyObject *args) {
+    PyObject *key, *default_val = Py_None;
+    if (!PyArg_ParseTuple(args, "O|O", &key, &default_val)) {
+        return NULL;
+    }
+
+    // Fire audit event (unless already in an env callback)
+    if (!g_in_env_callback) {
+        g_in_env_callback = 1;
+        PyObject *event_args = PyTuple_Pack(1, key);
+        if (event_args != NULL) {
+            invoke_audit_callback("os.environ.get", event_args);
+            Py_DECREF(event_args);
+        }
+        g_in_env_callback = 0;
+    }
+
+    // Delegate to wrapped environ.get()
+    return PyObject_CallMethod(self->wrapped, "get", "OO", key, default_val);
+}
+
+// AuditedEnviron.__contains__(key) - for "key in environ"
+static int AuditedEnviron_contains(AuditedEnvironObject *self, PyObject *key) {
+    return PySequence_Contains(self->wrapped, key);
+}
+
+// Sequence methods for __contains__
+static PySequenceMethods AuditedEnviron_as_sequence = {
+    0,                                        // sq_length
+    0,                                        // sq_concat
+    0,                                        // sq_repeat
+    0,                                        // sq_item
+    0,                                        // sq_slice
+    0,                                        // sq_ass_item
+    0,                                        // sq_ass_slice
+    (objobjproc)AuditedEnviron_contains,     // sq_contains
+    0,                                        // sq_inplace_concat
+    0,                                        // sq_inplace_repeat
+};
+
+// Forward method calls to the wrapped environ for methods we don't intercept
+static PyObject *AuditedEnviron_keys(AuditedEnvironObject *self, PyObject *Py_UNUSED(ignored)) {
+    return PyObject_CallMethod(self->wrapped, "keys", NULL);
+}
+
+static PyObject *AuditedEnviron_values(AuditedEnvironObject *self, PyObject *Py_UNUSED(ignored)) {
+    return PyObject_CallMethod(self->wrapped, "values", NULL);
+}
+
+static PyObject *AuditedEnviron_items(AuditedEnvironObject *self, PyObject *Py_UNUSED(ignored)) {
+    return PyObject_CallMethod(self->wrapped, "items", NULL);
+}
+
+static PyObject *AuditedEnviron_copy(AuditedEnvironObject *self, PyObject *Py_UNUSED(ignored)) {
+    return PyObject_CallMethod(self->wrapped, "copy", NULL);
+}
+
+static PyObject *AuditedEnviron_pop(AuditedEnvironObject *self, PyObject *args) {
+    return PyObject_Call(PyObject_GetAttrString(self->wrapped, "pop"), args, NULL);
+}
+
+static PyObject *AuditedEnviron_setdefault(AuditedEnvironObject *self, PyObject *args) {
+    return PyObject_Call(PyObject_GetAttrString(self->wrapped, "setdefault"), args, NULL);
+}
+
+static PyObject *AuditedEnviron_update(AuditedEnvironObject *self, PyObject *args, PyObject *kwargs) {
+    PyObject *method = PyObject_GetAttrString(self->wrapped, "update");
+    if (method == NULL) return NULL;
+    PyObject *result = PyObject_Call(method, args, kwargs);
+    Py_DECREF(method);
+    return result;
+}
+
+static PyObject *AuditedEnviron_clear(AuditedEnvironObject *self, PyObject *Py_UNUSED(ignored)) {
+    return PyObject_CallMethod(self->wrapped, "clear", NULL);
+}
+
+// __iter__ support
+static PyObject *AuditedEnviron_iter(AuditedEnvironObject *self) {
+    return PyObject_GetIter(self->wrapped);
+}
+
+// __repr__
+static PyObject *AuditedEnviron_repr(AuditedEnvironObject *self) {
+    return PyObject_Repr(self->wrapped);
+}
+
+// __str__
+static PyObject *AuditedEnviron_str(AuditedEnvironObject *self) {
+    return PyObject_Str(self->wrapped);
+}
+
+// Methods
+static PyMethodDef AuditedEnviron_methods[] = {
+    {"get", (PyCFunction)AuditedEnviron_get, METH_VARARGS, "Get an environment variable."},
+    {"keys", (PyCFunction)AuditedEnviron_keys, METH_NOARGS, "Return keys."},
+    {"values", (PyCFunction)AuditedEnviron_values, METH_NOARGS, "Return values."},
+    {"items", (PyCFunction)AuditedEnviron_items, METH_NOARGS, "Return items."},
+    {"copy", (PyCFunction)AuditedEnviron_copy, METH_NOARGS, "Return a copy."},
+    {"pop", (PyCFunction)AuditedEnviron_pop, METH_VARARGS, "Remove and return value."},
+    {"setdefault", (PyCFunction)AuditedEnviron_setdefault, METH_VARARGS, "Set default value."},
+    {"update", (PyCFunction)AuditedEnviron_update, METH_VARARGS | METH_KEYWORDS, "Update from dict."},
+    {"clear", (PyCFunction)AuditedEnviron_clear, METH_NOARGS, "Clear all."},
+    {NULL, NULL, 0, NULL}
+};
+
+// Destructor
+static void AuditedEnviron_dealloc(AuditedEnvironObject *self) {
+    Py_XDECREF(self->wrapped);
+    Py_TYPE(self)->tp_free((PyObject *)self);
+}
+
+// Type definition
+static PyTypeObject AuditedEnvironType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name = "malwi_box.AuditedEnviron",
+    .tp_doc = "Audited environment wrapper",
+    .tp_basicsize = sizeof(AuditedEnvironObject),
+    .tp_itemsize = 0,
+    .tp_flags = Py_TPFLAGS_DEFAULT,
+    .tp_dealloc = (destructor)AuditedEnviron_dealloc,
+    .tp_repr = (reprfunc)AuditedEnviron_repr,
+    .tp_str = (reprfunc)AuditedEnviron_str,
+    .tp_as_mapping = &AuditedEnviron_as_mapping,
+    .tp_as_sequence = &AuditedEnviron_as_sequence,
+    .tp_iter = (getiterfunc)AuditedEnviron_iter,
+    .tp_methods = AuditedEnviron_methods,
+};
+
+// Create a new AuditedEnviron wrapping the given environ
+static PyObject *AuditedEnviron_New(PyObject *wrapped) {
+    AuditedEnvironObject *self = PyObject_New(AuditedEnvironObject, &AuditedEnvironType);
+    if (self == NULL) {
+        return NULL;
+    }
+    Py_INCREF(wrapped);
+    self->wrapped = wrapped;
+    return (PyObject *)self;
+}
+
+// =============================================================================
+// audited_getenv: C-level replacement for os.getenv that fires audit events
+// =============================================================================
+
+static PyObject *audited_getenv(PyObject *self, PyObject *args, PyObject *kwargs) {
+    static char kw_key[] = "key";
+    static char kw_default[] = "default";
+    static char *kwlist[] = {kw_key, kw_default, NULL};
+    PyObject *key, *default_val = Py_None;
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|O", kwlist, &key, &default_val)) {
+        return NULL;
+    }
+
+    // Fire audit event and set guard (so environ.get doesn't also fire)
+    g_in_env_callback = 1;
+    PyObject *event_args = PyTuple_Pack(1, key);
+    if (event_args != NULL) {
+        invoke_audit_callback("os.getenv", event_args);
+        Py_DECREF(event_args);
+    }
+
+    // Call original getenv (which internally calls environ.get, but guard prevents double-fire)
+    PyObject *call_args = PyTuple_Pack(2, key, default_val);
+    if (call_args == NULL) {
+        g_in_env_callback = 0;
+        return NULL;
+    }
+    PyObject *result = PyObject_Call(g_os_getenv_original, call_args, NULL);
+    Py_DECREF(call_args);
+    g_in_env_callback = 0;
+    return result;
+}
+
+static PyMethodDef audited_getenv_def = {
+    "getenv",
+    (PyCFunction)audited_getenv,
+    METH_VARARGS | METH_KEYWORDS,
+    "Get an environment variable (audited)."
+};
 
 // Check if a string matches (for quick C-level checks)
 static inline int streq(const char *a, const char *b) {
@@ -523,7 +758,7 @@ static void check_crypto_function_call(PyFrameObject *frame) {
     Py_DECREF(code);
 }
 
-// Profile hook function for monitoring env var access and HTTP requests
+// Profile hook function for HTTP/encoding/crypto interception
 static int profile_hook(PyObject *obj, PyFrameObject *frame, int what, PyObject *arg) {
     // Skip if finalizing
     if (Py_IsFinalizing()) {
@@ -544,55 +779,11 @@ static int profile_hook(PyObject *obj, PyFrameObject *frame, int what, PyObject 
         check_http_function_call(frame);
         check_encoding_function_call(frame);
         check_crypto_function_call(frame);
-        return 0;
     }
 
-    // Handle C function calls (PyTrace_C_CALL) for env var monitoring
-    if (what != PyTrace_C_CALL) {
-        return 0;
-    }
+    // Note: env var monitoring is handled by AuditedEnviron wrapper and audited_getenv,
+    // not by PyTrace_C_CALL (which doesn't provide access to function arguments)
 
-    // arg is the function being called
-    if (arg == NULL || !PyCFunction_Check(arg)) {
-        return 0;
-    }
-
-    // Get function name
-    const char *func_name = ((PyCFunctionObject *)arg)->m_ml->ml_name;
-    if (func_name == NULL) {
-        return 0;
-    }
-
-    // Check if this is os.getenv or os.environ.get
-    int is_getenv = streq(func_name, "getenv");
-    int is_environ_get = streq(func_name, "get");
-
-    if (!is_getenv && !is_environ_get) {
-        return 0;
-    }
-
-    // For os.environ.get, verify it's from os.environ
-    if (is_environ_get) {
-        PyObject *self_obj = ((PyCFunctionObject *)arg)->m_self;
-        if (self_obj == NULL || self_obj != g_os_environ) {
-            return 0;
-        }
-    }
-
-    // Create a custom audit event "os.getenv" or "os.environ.get"
-    // We pass the function object as args so the callback can inspect it
-    const char *event_name = is_getenv ? "os.getenv" : "os.environ.get";
-
-    PyObject *args_tuple = PyTuple_New(1);
-    if (args_tuple == NULL) {
-        return 0;
-    }
-    Py_INCREF(arg);
-    PyTuple_SET_ITEM(args_tuple, 0, arg);
-
-    invoke_audit_callback(event_name, args_tuple);
-
-    Py_DECREF(args_tuple);
     return 0;
 }
 
@@ -626,16 +817,35 @@ static PyObject* set_callback(PyObject *self, PyObject *args) {
         g_module = self;
         Py_INCREF(g_module);
 
-        // Register the profile hook for env var monitoring BEFORE the audit hook
+        // Cache os module references and install audited wrappers BEFORE the audit hook
         // (because audit hook blocks sys.setprofile events)
-        // Cache os module references first
         if (g_os_module == NULL) {
             g_os_module = PyImport_ImportModule("os");
             if (g_os_module != NULL) {
-                g_os_getenv = PyObject_GetAttrString(g_os_module, "getenv");
-                g_os_environ = PyObject_GetAttrString(g_os_module, "environ");
+                // Save original getenv and environ
+                g_os_getenv_original = PyObject_GetAttrString(g_os_module, "getenv");
+                g_os_environ_original = PyObject_GetAttrString(g_os_module, "environ");
+
+                // Initialize the AuditedEnviron type
+                if (PyType_Ready(&AuditedEnvironType) >= 0) {
+                    // Create and install audited environ wrapper
+                    PyObject *audited_environ = AuditedEnviron_New(g_os_environ_original);
+                    if (audited_environ != NULL) {
+                        PyObject_SetAttrString(g_os_module, "environ", audited_environ);
+                        Py_DECREF(audited_environ);
+                    }
+                }
+
+                // Create and install audited getenv function
+                PyObject *audited_getenv_func = PyCFunction_New(&audited_getenv_def, NULL);
+                if (audited_getenv_func != NULL) {
+                    PyObject_SetAttrString(g_os_module, "getenv", audited_getenv_func);
+                    Py_DECREF(audited_getenv_func);
+                }
             }
         }
+
+        // Register profile hook for HTTP/encoding/crypto interception
         PyEval_SetProfile(profile_hook, NULL);
         state->profile_registered = 1;
 
@@ -746,8 +956,8 @@ static int module_clear(PyObject *module) {
 
     // Clear cached os module references
     Py_CLEAR(g_os_module);
-    Py_CLEAR(g_os_getenv);
-    Py_CLEAR(g_os_environ);
+    Py_CLEAR(g_os_getenv_original);
+    Py_CLEAR(g_os_environ_original);
 
     AuditHookState *state = get_state(module);
     if (state != NULL) {

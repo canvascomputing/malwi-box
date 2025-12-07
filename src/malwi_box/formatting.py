@@ -53,6 +53,10 @@ def format_event(event: str, args: tuple) -> str:
     if event == "os.unsetenv":
         return f"Unset env var: {_decode(args[0])}"
 
+    if event in ("os.getenv", "os.environ.get"):
+        key = _decode(args[0])
+        return f"Read env var: {key}"
+
     if event == "socket.getaddrinfo":
         host = args[0]
         port = args[1] if len(args) > 1 else ""
@@ -170,7 +174,7 @@ def extract_decision_details(event: str, args: tuple) -> dict:
     elif event == "ctypes.dlopen":
         details["library"] = str(args[0]) if args else ""
 
-    elif event in ("os.putenv", "os.unsetenv"):
+    elif event in ("os.putenv", "os.unsetenv", "os.getenv", "os.environ.get"):
         key = args[0]
         details["key"] = key.decode() if isinstance(key, bytes) else str(key)
 

@@ -80,3 +80,80 @@ def test_blocklist_skips_events():
 
     # 'exec' should not be in captured events
     assert "exec" not in events
+
+
+def test_os_getenv_fires_event():
+    """Test that os.getenv triggers an os.getenv audit event."""
+    import os
+
+    events = []
+
+    def hook(event, args):
+        if event == "os.getenv":
+            events.append((event, args))
+
+    install_hook(hook)
+    os.getenv("TEST_VAR_GETENV")
+    uninstall_hook()
+
+    assert len(events) == 1
+    assert events[0][0] == "os.getenv"
+    assert events[0][1][0] == "TEST_VAR_GETENV"
+
+
+def test_os_environ_get_fires_event():
+    """Test that os.environ.get triggers an os.environ.get audit event."""
+    import os
+
+    events = []
+
+    def hook(event, args):
+        if event == "os.environ.get":
+            events.append((event, args))
+
+    install_hook(hook)
+    os.environ.get("TEST_VAR_ENVIRON_GET")
+    uninstall_hook()
+
+    assert len(events) == 1
+    assert events[0][0] == "os.environ.get"
+    assert events[0][1][0] == "TEST_VAR_ENVIRON_GET"
+
+
+def test_os_environ_subscript_fires_event():
+    """Test that os.environ['key'] triggers an os.environ.get audit event."""
+    import os
+
+    events = []
+
+    def hook(event, args):
+        if event == "os.environ.get":
+            events.append((event, args))
+
+    install_hook(hook)
+    # Use a key we know exists to avoid KeyError
+    _ = os.environ["PATH"]
+    uninstall_hook()
+
+    assert len(events) == 1
+    assert events[0][0] == "os.environ.get"
+    assert events[0][1][0] == "PATH"
+
+
+def test_os_getenv_no_double_event():
+    """Test that os.getenv only fires one event (not also os.environ.get)."""
+    import os
+
+    events = []
+
+    def hook(event, args):
+        if event in ("os.getenv", "os.environ.get"):
+            events.append((event, args))
+
+    install_hook(hook)
+    os.getenv("TEST_NO_DOUBLE")
+    uninstall_hook()
+
+    # Should only have one event (os.getenv), not two (os.getenv + os.environ.get)
+    assert len(events) == 1
+    assert events[0][0] == "os.getenv"

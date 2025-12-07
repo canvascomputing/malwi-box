@@ -82,6 +82,8 @@ INFO_ONLY_EVENTS = frozenset(
         "encoding.base64",
         "crypto.cipher",
         "crypto.fernet",
+        "os.putenv",
+        "os.unsetenv",
     }
 )
 
@@ -296,7 +298,6 @@ class BoxEngine:
             "allow_shell_commands": [],
             # Environment
             "allow_env_var_reads": ["$SAFE_ENV_VARS"],
-            "allow_env_var_writes": ["$SAFE_ENV_VARS"],
             # Sockets
             "allow_raw_sockets": False,
         }
@@ -392,7 +393,7 @@ class BoxEngine:
         # Check for pattern like "$PYPI_DOMAINS/*"
         for var, values in LIST_VARIABLES.items():
             if entry.startswith(var):
-                suffix = entry[len(var):]
+                suffix = entry[len(var) :]
                 return [v + suffix for v in values]
 
         return [entry]
@@ -653,15 +654,6 @@ class BoxEngine:
                 return self._check_modify_permission(resolved)
         else:
             return self._check_read_permission(resolved)
-
-    def _check_env_write(self, args: tuple) -> bool:
-        """Check environment variable write permission."""
-        if not args:
-            return True
-
-        key = args[0]
-        allowed = self.config.get("allow_env_var_writes", [])
-        return key in allowed
 
     def _extract_executable(self, event: str, args: tuple) -> str | None:
         """Extract executable path from various execution events.
@@ -1036,8 +1028,6 @@ class BoxEngine:
             return self._check_file_access(args)
         elif event in ("os.remove", "os.unlink"):
             return self._check_file_delete(args)
-        elif event in ("os.putenv", "os.unsetenv"):
-            return self._check_env_write(args)
         elif event in ("os.getenv", "os.environ.get"):
             return self._check_env_read(args)
         elif event in EXEC_EVENTS:
@@ -1215,11 +1205,6 @@ class BoxEngine:
                 if cmd and cmd not in config.get("allow_shell_commands", []):
                     config.setdefault("allow_shell_commands", []).append(cmd)
 
-            elif event in ("os.putenv", "os.unsetenv"):
-                key = details.get("key")
-                if key and key not in config.get("allow_env_var_writes", []):
-                    config.setdefault("allow_env_var_writes", []).append(key)
-
             elif event in ("socket.getaddrinfo", "socket.gethostbyname"):
                 domain = details.get("domain")
                 port = details.get("port")
@@ -1271,7 +1256,7 @@ class BoxEngine:
         if self._is_sensitive_env_var(key):
             return False
 
-        allowed = self.config.get("allow_env_var_reads", [])
+        allowed = self._expand_config_list("allow_env_var_reads")
         if not allowed:
             return False  # Empty = block all
 

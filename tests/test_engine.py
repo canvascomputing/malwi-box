@@ -11,7 +11,7 @@ class TestConfigLoading:
         """Test that default config is used when no file exists."""
         engine = BoxEngine(config_path=tmp_path / ".malwi-box.toml", workdir=tmp_path)
 
-        # Default config uses variable $PYPI_DOMAINS (expands to pypi.org, files.pythonhosted.org)
+        # Default config uses variable $PYPI_DOMAINS (expands to pypi domains)
         assert "$PYPI_DOMAINS" in engine.config["allow_domains"]
         # Default config uses variables like $PWD which get expanded at runtime
         assert "$PWD" in engine.config["allow_read"]
@@ -551,37 +551,54 @@ class TestDomainPermissions:
 class TestEnvVarPermissions:
     """Tests for environment variable permission checks."""
 
-    def test_allow_env_write(self, tmp_path):
-        """Test that allowed env var writes pass."""
-        config = {"allow_env_var_writes": ["PATH", "HOME"]}
+    def test_allow_env_read(self, tmp_path):
+        """Test that allowed env var reads pass."""
+        config = {"allow_env_var_reads": ["PATH", "HOME"]}
         config_path = tmp_path / ".malwi-box.toml"
         config_path.write_text(toml.dumps(config))
 
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
-        assert engine.check_permission("os.putenv", ("PATH", "/usr/bin"))
-        assert engine.check_permission("os.putenv", ("HOME", "/home/user"))
+        assert engine.check_permission("os.getenv", ("PATH",))
+        assert engine.check_permission("os.environ.get", ("HOME",))
 
-    def test_block_env_write(self, tmp_path):
-        """Test that non-allowed env var writes are blocked."""
-        config = {"allow_env_var_writes": ["PATH"]}
+    def test_block_env_read_when_empty(self, tmp_path):
+        """Test that empty allow_env_var_reads blocks all reads."""
+        config = {"allow_env_var_reads": []}
         config_path = tmp_path / ".malwi-box.toml"
         config_path.write_text(toml.dumps(config))
 
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
-        assert not engine.check_permission("os.putenv", ("SECRET_KEY", "value"))
+        assert not engine.check_permission("os.getenv", ("PATH",))
+        assert not engine.check_permission("os.environ.get", ("HOME",))
 
-    def test_allow_env_unset(self, tmp_path):
-        """Test that os.unsetenv uses same permissions as putenv."""
-        config = {"allow_env_var_writes": ["TEMP_VAR"]}
+    def test_block_sensitive_env_read(self, tmp_path):
+        """Test that sensitive env vars are always blocked."""
+        config = {"allow_env_var_reads": ["AWS_SECRET_ACCESS_KEY"]}
         config_path = tmp_path / ".malwi-box.toml"
         config_path.write_text(toml.dumps(config))
 
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
-        assert engine.check_permission("os.unsetenv", ("TEMP_VAR",))
-        assert not engine.check_permission("os.unsetenv", ("SECRET_KEY",))
+        # Even if explicitly allowed, sensitive vars are blocked
+        assert not engine.check_permission("os.getenv", ("AWS_SECRET_ACCESS_KEY",))
+        assert not engine.check_permission("os.environ.get", ("GITHUB_TOKEN",))
+
+    def test_allow_env_read_with_variable(self, tmp_path):
+        """Test that $SAFE_ENV_VARS variable expands correctly."""
+        config = {"allow_env_var_reads": ["$SAFE_ENV_VARS"]}
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Safe env vars should be allowed
+        assert engine.check_permission("os.getenv", ("PATH",))
+        assert engine.check_permission("os.getenv", ("HOME",))
+        assert engine.check_permission("os.getenv", ("PYTHONPATH",))
+        # Non-safe vars should be blocked
+        assert not engine.check_permission("os.getenv", ("MY_CUSTOM_VAR",))
 
 
 class TestDecisionRecording:
@@ -705,23 +722,6 @@ class TestDecisionRecording:
 
         saved_config = toml.loads(config_path.read_text())
         assert "example.com" in saved_config.get("allow_domains", [])
-
-    def test_record_and_save_env_var_decision(self, tmp_path):
-        """Test that env var write decisions are saved correctly."""
-        config_path = tmp_path / ".malwi-box.toml"
-        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
-
-        engine.record_decision(
-            "os.putenv",
-            ("MY_VAR", "value"),
-            allowed=True,
-            details={"key": "MY_VAR"},
-        )
-
-        engine.save_decisions()
-
-        saved_config = toml.loads(config_path.read_text())
-        assert "MY_VAR" in saved_config.get("allow_env_var_writes", [])
 
 
 class TestUnhandledEvents:

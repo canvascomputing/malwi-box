@@ -171,7 +171,6 @@ allow_shell_commands = [
 
 # Environment variables (empty = block all)
 allow_env_var_reads = ["$SAFE_ENV_VARS"]  # variable for safe env vars
-allow_env_var_writes = ["PATH", "PYTHONPATH"]
 ```
 
 ### Variables
@@ -216,7 +215,6 @@ All `allow_*` attributes consistently block when empty. Use variables to documen
 | `allow_executables` | Block all | (none) |
 | `allow_shell_commands` | Block all | (none) |
 | `allow_env_var_reads` | Block all | `$SAFE_ENV_VARS` |
-| `allow_env_var_writes` | Block all | `$SAFE_ENV_VARS` |
 
 ### Network Behavior
 - Domains in `allow_domains` automatically permit their resolved IPs
@@ -283,11 +281,14 @@ Some operations are logged for security awareness but never blocked. They help i
 | `encoding.base64` | Base64 encoding/decoding | `Base64: b64encode` |
 | `crypto.cipher` | Cipher encryption/decryption (cryptography library) | `Cipher: Encrypt` |
 | `crypto.fernet` | Fernet encryption/decryption | `Fernet: encrypt` |
+| `os.putenv` | Set environment variable | `Set env var: PATH=/tmp` |
+| `os.unsetenv` | Unset environment variable | `Unset env var: DEBUG` |
 
 These events are always logged regardless of mode (run, force, or review) and cannot be disabled. They help identify:
 - Data exfiltration attempts (base64 encoding)
 - Ransomware behavior (encryption operations)
 - Obfuscation techniques
+- Environment manipulation (env var changes)
 
 ## Limitations
 

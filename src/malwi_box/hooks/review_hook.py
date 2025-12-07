@@ -51,20 +51,11 @@ CRITICAL_EVENTS = frozenset(
     }
 )
 
-WARNING_EVENTS = frozenset(
-    {
-        "os.putenv",
-        "os.unsetenv",
-    }
-)
-
 
 def get_event_color(event: str, args: tuple, engine=None) -> str:
     """Get color based on event criticality."""
     if event in CRITICAL_EVENTS:
         return RED
-    if event in WARNING_EVENTS:
-        return ORANGE
     if event == "open" and args:
         # Sensitive paths are critical
         path = args[0]

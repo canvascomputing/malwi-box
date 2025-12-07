@@ -61,11 +61,13 @@ class TestHttpClientHook:
         install_hook(hook)
         try:
             # Create connection but mock the socket
-            with patch.object(http.client.HTTPConnection, "connect"):
-                with patch.object(http.client.HTTPConnection, "_send_output"):
-                    with patch.object(http.client.HTTPConnection, "getresponse"):
-                        conn = http.client.HTTPConnection("example.com", 80)
-                        conn.request("GET", "/api/test")
+            with (
+                patch.object(http.client.HTTPConnection, "connect"),
+                patch.object(http.client.HTTPConnection, "_send_output"),
+                patch.object(http.client.HTTPConnection, "getresponse"),
+            ):
+                conn = http.client.HTTPConnection("example.com", 80)
+                conn.request("GET", "/api/test")
         finally:
             uninstall_hook()
 
@@ -85,11 +87,13 @@ class TestHttpClientHook:
 
         install_hook(hook)
         try:
-            with patch.object(http.client.HTTPSConnection, "connect"):
-                with patch.object(http.client.HTTPSConnection, "_send_output"):
-                    with patch.object(http.client.HTTPSConnection, "getresponse"):
-                        conn = http.client.HTTPSConnection("secure.example.com", 443)
-                        conn.request("POST", "/secure/endpoint")
+            with (
+                patch.object(http.client.HTTPSConnection, "connect"),
+                patch.object(http.client.HTTPSConnection, "_send_output"),
+                patch.object(http.client.HTTPSConnection, "getresponse"),
+            ):
+                conn = http.client.HTTPSConnection("secure.example.com", 443)
+                conn.request("POST", "/secure/endpoint")
         finally:
             uninstall_hook()
 
@@ -213,7 +217,9 @@ class TestUrllib3Hook:
         try:
             # Catch the connection error - we just want to verify the hook fires
             try:
-                pool = urllib3.HTTPConnectionPool("urllib3.example.com", 80, timeout=0.001)
+                pool = urllib3.HTTPConnectionPool(
+                    "urllib3.example.com", 80, timeout=0.001
+                )
                 pool.urlopen("GET", "/pool/test")
             except urllib3.exceptions.HTTPError:
                 pass  # Expected - we just need the hook to fire
