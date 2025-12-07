@@ -197,14 +197,14 @@ class TestFormatEvent:
 
     def test_format_open_read(self):
         """Test formatting of file read events."""
-        from malwi_box.cli import _format_event
+        from malwi_box.formatting import format_event as _format_event
 
         result = _format_event("open", ("/etc/passwd", "r", 0))
         assert result == "Read file: /etc/passwd"
 
     def test_format_open_write_new_file(self, tmp_path):
         """Test formatting of file create events."""
-        from malwi_box.cli import _format_event
+        from malwi_box.formatting import format_event as _format_event
 
         new_file = str(tmp_path / "newfile.txt")
         result = _format_event("open", (new_file, "w", 0))
@@ -212,7 +212,7 @@ class TestFormatEvent:
 
     def test_format_open_write_existing_file(self, tmp_path):
         """Test formatting of file modify events."""
-        from malwi_box.cli import _format_event
+        from malwi_box.formatting import format_event as _format_event
 
         existing = tmp_path / "existing.txt"
         existing.write_text("content")
@@ -221,14 +221,14 @@ class TestFormatEvent:
 
     def test_format_putenv(self):
         """Test formatting of env var set events."""
-        from malwi_box.cli import _format_event
+        from malwi_box.formatting import format_event as _format_event
 
         result = _format_event("os.putenv", (b"MY_VAR", b"my_value"))
         assert result == "Set env var: MY_VAR=my_value"
 
     def test_format_putenv_truncates_long_values(self):
         """Test that long env var values are truncated."""
-        from malwi_box.cli import _format_event
+        from malwi_box.formatting import format_event as _format_event
 
         long_value = "x" * 100
         result = _format_event("os.putenv", (b"KEY", long_value.encode()))
@@ -237,28 +237,28 @@ class TestFormatEvent:
 
     def test_format_unsetenv(self):
         """Test formatting of env var unset events."""
-        from malwi_box.cli import _format_event
+        from malwi_box.formatting import format_event as _format_event
 
         result = _format_event("os.unsetenv", (b"MY_VAR",))
         assert result == "Unset env var: MY_VAR"
 
     def test_format_dns_lookup_with_port(self):
         """Test formatting of DNS lookup with port."""
-        from malwi_box.cli import _format_event
+        from malwi_box.formatting import format_event as _format_event
 
         result = _format_event("socket.getaddrinfo", ("example.com", 443, 0, 1, 0))
         assert result == "DNS lookup: example.com:443"
 
     def test_format_dns_lookup_without_port(self):
         """Test formatting of DNS lookup without port."""
-        from malwi_box.cli import _format_event
+        from malwi_box.formatting import format_event as _format_event
 
         result = _format_event("socket.gethostbyname", ("example.com",))
         assert result == "DNS lookup: example.com"
 
     def test_format_subprocess(self):
         """Test formatting of subprocess events."""
-        from malwi_box.cli import _format_event
+        from malwi_box.formatting import format_event as _format_event
 
         # args[1] is argv which includes program name
         args = ("/bin/ls", ["/bin/ls", "-la", "/tmp"], None, None)
@@ -267,7 +267,7 @@ class TestFormatEvent:
 
     def test_format_subprocess_truncates_long_commands(self):
         """Test that long commands are truncated."""
-        from malwi_box.cli import _format_event
+        from malwi_box.formatting import format_event as _format_event
 
         long_args = ["arg"] * 50
         result = _format_event("subprocess.Popen", ("/bin/cmd", long_args, None, None))
@@ -276,14 +276,14 @@ class TestFormatEvent:
 
     def test_format_os_system(self):
         """Test formatting of os.system events."""
-        from malwi_box.cli import _format_event
+        from malwi_box.formatting import format_event as _format_event
 
         result = _format_event("os.system", ("ls -la",))
         assert result == "Shell: ls -la"
 
     def test_format_unknown_event_fallback(self):
         """Test fallback for unknown events."""
-        from malwi_box.cli import _format_event
+        from malwi_box.formatting import format_event as _format_event
 
         result = _format_event("unknown.event", ("arg1", "arg2"))
         assert "unknown.event" in result

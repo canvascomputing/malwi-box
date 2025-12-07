@@ -7,7 +7,6 @@ import sys
 import tempfile
 
 from malwi_box import __version__
-from malwi_box.formatting import format_event as _format_event  # noqa: F401
 
 # Templates import the hook modules which auto-setup on import
 RUN_SITECUSTOMIZE_TEMPLATE = (
@@ -21,14 +20,22 @@ FORCE_SITECUSTOMIZE_TEMPLATE = (
 )
 
 
+def _select_template(review: bool, force: bool) -> str:
+    """Select the appropriate sitecustomize template."""
+    if force:
+        return FORCE_SITECUSTOMIZE_TEMPLATE
+    elif review:
+        return REVIEW_SITECUSTOMIZE_TEMPLATE
+    else:
+        return RUN_SITECUSTOMIZE_TEMPLATE
+
+
 def _setup_hook_env(template: str) -> tuple[str, dict[str, str]]:
     """Create sitecustomize.py and return (tmpdir, env) for hook injection.
 
     Note: Caller must manage the temporary directory lifecycle.
     """
-    import tempfile as tf
-
-    tmpdir = tf.mkdtemp()
+    tmpdir = tempfile.mkdtemp()
     sitecustomize_path = os.path.join(tmpdir, "sitecustomize.py")
     with open(sitecustomize_path, "w") as f:
         f.write(template)
@@ -64,30 +71,22 @@ def _run_with_hook(command: list[str], template: str) -> int:
         print("Error: No command specified", file=sys.stderr)
         return 1
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        sitecustomize_path = os.path.join(tmpdir, "sitecustomize.py")
-        with open(sitecustomize_path, "w") as f:
-            f.write(template)
-
-        env = os.environ.copy()
-        existing_path = env.get("PYTHONPATH", "")
-        if existing_path:
-            env["PYTHONPATH"] = f"{tmpdir}{os.pathsep}{existing_path}"
-        else:
-            env["PYTHONPATH"] = tmpdir
-
+    tmpdir, env = _setup_hook_env(template)
+    try:
         first = command[0]
-
         if first.endswith(".py") or os.path.isfile(first):
             cmd = [sys.executable] + command
         else:
             cmd = [sys.executable, "-m"] + command
 
-        try:
-            result = subprocess.run(cmd, env=env)
-            return result.returncode
-        except KeyboardInterrupt:
-            return 130
+        result = subprocess.run(cmd, env=env)
+        return result.returncode
+    except KeyboardInterrupt:
+        return 130
+    finally:
+        import shutil
+
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def run_command(args: argparse.Namespace) -> int:
@@ -103,27 +102,14 @@ def run_command(args: argparse.Namespace) -> int:
         command.remove("--force")
         force = True
 
-    if force:
-        template = FORCE_SITECUSTOMIZE_TEMPLATE
-    elif review:
-        template = REVIEW_SITECUSTOMIZE_TEMPLATE
-    else:
-        template = RUN_SITECUSTOMIZE_TEMPLATE
+    template = _select_template(review, force)
     return _run_with_hook(command, template)
 
 
 def eval_command(args: argparse.Namespace) -> int:
     """Execute Python code string with sandboxing."""
-    code = args.code
-
-    if args.force:
-        template = FORCE_SITECUSTOMIZE_TEMPLATE
-    elif args.review:
-        template = REVIEW_SITECUSTOMIZE_TEMPLATE
-    else:
-        template = RUN_SITECUSTOMIZE_TEMPLATE
-
-    return _run_with_hook_code(code, template)
+    template = _select_template(args.review, args.force)
+    return _run_with_hook_code(args.code, template)
 
 
 def _build_pip_args(args: argparse.Namespace) -> list[str] | None:
