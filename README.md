@@ -12,6 +12,10 @@
   <em>Shipped without any dependencies, except pip</em>
 </p>
 
+<p align="center">
+  <img src="malwi-box.svg" alt="malwi-box demo" width="600">
+</p>
+
 ## Use Cases
 
 - 🔬 **Malware analysis** - Safely detonate suspicious Python code and observe its behavior
@@ -48,6 +52,15 @@ Run a Python script or module with sandboxing.
 malwi-box run script.py [args...]
 malwi-box run --force script.py     # log violations without blocking
 malwi-box run --review script.py    # approve/deny each operation
+```
+
+```
+$ malwi-box run --review package_setup.py
+[malwi-box] Open (read): /home/user/.aws/credentials
+Approve? [Y/n/i]: y
+[malwi-box] DNS lookup: evil-c2.xyz:443
+Approve? [Y/n/i]: n
+Denied
 ```
 
 ### install
