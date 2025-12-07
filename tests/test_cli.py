@@ -7,8 +7,8 @@ import sys
 class TestCLICommands:
     """Tests for CLI command structure."""
 
-    def test_help_shows_run_and_install(self):
-        """Test that main help shows run and install subcommands."""
+    def test_help_shows_subcommands(self):
+        """Test that main help shows all subcommands."""
         result = subprocess.run(
             [sys.executable, "-m", "malwi_box.cli", "--help"],
             capture_output=True,
@@ -16,6 +16,7 @@ class TestCLICommands:
         )
         assert result.returncode == 0
         assert "run" in result.stdout
+        assert "eval" in result.stdout
         assert "install" in result.stdout
 
     def test_run_help(self):
@@ -50,6 +51,87 @@ class TestCLICommands:
         )
         assert result.returncode == 1
         assert "Must specify package or -r/--requirements" in result.stderr
+
+
+class TestEvalCommand:
+    """Tests for eval subcommand."""
+
+    def test_eval_help(self):
+        """Test eval subcommand help."""
+        result = subprocess.run(
+            [sys.executable, "-m", "malwi_box.cli", "eval", "--help"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0
+        assert "--review" in result.stdout
+        assert "--force" in result.stdout
+        assert "code" in result.stdout
+
+    def test_eval_simple_code(self, tmp_path):
+        """Test executing simple code string."""
+        # Use default config with proper read permissions
+        config = tmp_path / ".malwi-box.toml"
+        config.write_text(
+            'allow_read = ["$PWD", "$PYTHON_STDLIB", "$PYTHON_SITE_PACKAGES"]'
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-m", "malwi_box.cli", "eval", "print('hello')"],
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+        )
+        assert result.returncode == 0
+        assert "hello" in result.stdout
+
+    def test_eval_with_force_flag(self, tmp_path):
+        """Test eval with --force flag logs violations but continues."""
+        # Config with stdlib permissions but blocking /etc/passwd
+        config = tmp_path / ".malwi-box.toml"
+        config.write_text(
+            'allow_read = ["$PWD", "$PYTHON_STDLIB", "$PYTHON_SITE_PACKAGES"]'
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "malwi_box.cli",
+                "eval",
+                "--force",
+                "open('/etc/passwd'); print('done')",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+        )
+        # With --force, code continues despite violations
+        assert "done" in result.stdout
+
+    def test_eval_blocks_violations(self, tmp_path):
+        """Test that eval blocks security violations without --force."""
+        # Allow stdlib but block /etc/passwd
+        config = tmp_path / ".malwi-box.toml"
+        config.write_text(
+            'allow_read = ["$PWD", "$PYTHON_STDLIB", "$PYTHON_SITE_PACKAGES"]'
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "malwi_box.cli",
+                "eval",
+                "open('/etc/passwd'); print('should not reach')",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+        )
+        # Should be blocked before reaching print
+        assert result.returncode != 0
+        assert "should not reach" not in result.stdout
 
 
 class TestConfigCreate:

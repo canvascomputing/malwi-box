@@ -189,8 +189,3 @@ def setup_hook(engine=None):
 
     atexit.register(save_on_exit)
     install_hook(hook, blocklist=BLOCKLIST)
-
-
-# Auto-setup when imported as sitecustomize
-if __name__ != "__main__":
-    setup_hook()

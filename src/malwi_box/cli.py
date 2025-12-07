@@ -20,6 +20,43 @@ FORCE_SITECUSTOMIZE_TEMPLATE = (
 )
 
 
+def _setup_hook_env(template: str) -> tuple[str, dict[str, str]]:
+    """Create sitecustomize.py and return (tmpdir, env) for hook injection.
+
+    Note: Caller must manage the temporary directory lifecycle.
+    """
+    import tempfile as tf
+
+    tmpdir = tf.mkdtemp()
+    sitecustomize_path = os.path.join(tmpdir, "sitecustomize.py")
+    with open(sitecustomize_path, "w") as f:
+        f.write(template)
+
+    env = os.environ.copy()
+    existing_path = env.get("PYTHONPATH", "")
+    if existing_path:
+        env["PYTHONPATH"] = f"{tmpdir}{os.pathsep}{existing_path}"
+    else:
+        env["PYTHONPATH"] = tmpdir
+
+    return tmpdir, env
+
+
+def _run_with_hook_code(code: str, template: str) -> int:
+    """Run Python code string with the specified sitecustomize template."""
+    tmpdir, env = _setup_hook_env(template)
+    try:
+        cmd = [sys.executable, "-c", code]
+        result = subprocess.run(cmd, env=env)
+        return result.returncode
+    except KeyboardInterrupt:
+        return 130
+    finally:
+        import shutil
+
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 def _run_with_hook(command: list[str], template: str) -> int:
     """Run a command with the specified sitecustomize template."""
     if not command:
@@ -72,6 +109,20 @@ def run_command(args: argparse.Namespace) -> int:
     else:
         template = RUN_SITECUSTOMIZE_TEMPLATE
     return _run_with_hook(command, template)
+
+
+def eval_command(args: argparse.Namespace) -> int:
+    """Execute Python code string with sandboxing."""
+    code = args.code
+
+    if args.force:
+        template = FORCE_SITECUSTOMIZE_TEMPLATE
+    elif args.review:
+        template = REVIEW_SITECUSTOMIZE_TEMPLATE
+    else:
+        template = RUN_SITECUSTOMIZE_TEMPLATE
+
+    return _run_with_hook_code(code, template)
 
 
 def _build_pip_args(args: argparse.Namespace) -> list[str] | None:
@@ -134,7 +185,7 @@ def config_create_command(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Python audit hook sandbox",
-        usage="%(prog)s {run,install} ...",
+        usage="%(prog)s {run,eval,install,config} ...",
     )
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
@@ -154,6 +205,26 @@ def main() -> int:
         help="Enable interactive approval mode",
     )
     run_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Log violations without blocking",
+    )
+
+    eval_parser = subparsers.add_parser(
+        "eval",
+        help="Execute Python code string with sandboxing",
+        usage="%(prog)s <code> [--review] [--force]",
+    )
+    eval_parser.add_argument(
+        "code",
+        help="Python code to execute",
+    )
+    eval_parser.add_argument(
+        "--review",
+        action="store_true",
+        help="Enable interactive approval mode",
+    )
+    eval_parser.add_argument(
         "--force",
         action="store_true",
         help="Log violations without blocking",
@@ -204,6 +275,8 @@ def main() -> int:
 
     if args.subcommand == "run":
         return run_command(args)
+    elif args.subcommand == "eval":
+        return eval_command(args)
     elif args.subcommand == "install":
         return install_command(args)
     elif args.subcommand == "config" and args.config_subcommand == "create":

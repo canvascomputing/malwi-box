@@ -41,8 +41,3 @@ def setup_hook(engine=None):
             in_hook = False
 
     install_hook(hook)
-
-
-# Auto-setup when imported as sitecustomize
-if __name__ != "__main__":
-    setup_hook()

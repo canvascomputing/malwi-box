@@ -37,9 +37,10 @@ uv tool install malwi-box
 
 ## Quick Start
 
-```bash
-malwi-box config create
-malwi-box run script.py
+```
+$ malwi-box eval "open('/etc/passwd').read()"
+
+[malwi-box] Blocked: Read file: /etc/passwd
 ```
 
 ## Commands
@@ -54,13 +55,14 @@ malwi-box run --force script.py     # log violations without blocking
 malwi-box run --review script.py    # approve/deny each operation
 ```
 
-```
-$ malwi-box run --review package_setup.py
-[malwi-box] Open (read): /home/user/.aws/credentials
-Approve? [Y/n/i]: y
-[malwi-box] DNS lookup: evil-c2.xyz:443
-Approve? [Y/n/i]: n
-Denied
+### eval
+
+Execute a Python code string with sandboxing.
+
+```bash
+malwi-box eval "print('hello')"
+malwi-box eval --force "import os; os.system('id')"
+malwi-box eval --review "open('/etc/passwd').read()"
 ```
 
 ### install
