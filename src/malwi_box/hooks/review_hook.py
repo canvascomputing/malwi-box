@@ -59,16 +59,31 @@ WARNING_EVENTS = frozenset(
 )
 
 
-def get_event_color(event: str, args: tuple) -> str:
+def get_event_color(event: str, args: tuple, engine=None) -> str:
     """Get color based on event criticality."""
     if event in CRITICAL_EVENTS:
         return RED
     if event in WARNING_EVENTS:
         return ORANGE
-    if event == "open" and len(args) > 1:
-        mode = args[1] or "r"
-        if any(c in mode for c in "wax+"):
+    if event == "open" and args:
+        # Sensitive paths are critical
+        path = args[0]
+        if engine and isinstance(path, (str, bytes)):
+            if isinstance(path, bytes):
+                path = path.decode("utf-8", errors="replace")
+            if engine._is_sensitive_path(path):
+                return RED
+        # Write modes are warnings
+        mode = args[1] if len(args) > 1 else "r"
+        if mode and any(c in mode for c in "wax+"):
             return ORANGE
+    if event in ("os.getenv", "os.environ.get") and args and engine:
+        # Sensitive env vars are critical
+        var_name = args[0]
+        if isinstance(var_name, bytes):
+            var_name = var_name.decode("utf-8", errors="replace")
+        if engine._is_sensitive_env_var(var_name):
+            return RED
     return YELLOW
 
 
@@ -153,7 +168,7 @@ def setup_hook(engine=None):
             if engine.check_permission(event, args):
                 return
 
-            color = get_event_color(event, args)
+            color = get_event_color(event, args, engine)
             msg = f"{color}[malwi-box] {format_event(event, args)}{RESET}"
             print(msg, file=sys.stderr)
 

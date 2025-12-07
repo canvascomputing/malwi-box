@@ -89,6 +89,7 @@ INFO_ONLY_EVENTS = frozenset(
 # Even if a broader path like $OS_SYSTEM is allowed, these are blocked
 SENSITIVE_PATHS = [
     # System credentials & secrets
+    "/etc/passwd",
     "/etc/shadow",
     "/etc/gshadow",
     "/etc/sudoers",
