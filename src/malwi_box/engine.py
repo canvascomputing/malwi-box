@@ -6,7 +6,12 @@ import fnmatch
 import hashlib
 import ipaddress
 import os
+import re
+import shutil
+import socket
 import sys
+import sysconfig
+import tempfile
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -336,6 +341,27 @@ class BoxEngine:
         else:  # Linux
             return ["/usr/lib", "/usr/share", "/lib", "/lib64"]
 
+    def _get_path_variable_mappings(self) -> list[tuple[str, str]]:
+        """Return ordered list of (path, variable) mappings.
+
+        Order matters - more specific paths first for correct matching
+        when converting paths to variables.
+        """
+        return [
+            # Python ecosystem (most specific)
+            (self._get_pip_cache(), "$PIP_CACHE"),
+            (os.environ.get("VIRTUAL_ENV", ""), "$VENV"),
+            (sysconfig.get_path("purelib") or "", "$PYTHON_SITE_PACKAGES"),
+            (sysconfig.get_path("platlib") or "", "$PYTHON_PLATLIB"),
+            (sysconfig.get_path("stdlib") or "", "$PYTHON_STDLIB"),
+            (sys.prefix, "$PYTHON_PREFIX"),
+            # System paths - order: cache, PWD, TMPDIR, HOME
+            (self._get_cache_home(), "$CACHE_HOME"),
+            (str(self.workdir), "$PWD"),
+            (tempfile.gettempdir(), "$TMPDIR"),
+            (os.path.expanduser("~"), "$HOME"),
+        ]
+
     def _expand_path_variables(self, path: str) -> str:
         """Expand variables in a path string.
 
@@ -348,24 +374,8 @@ class BoxEngine:
         if "$" not in path:
             return path
 
-        import re
-        import sysconfig
-        import tempfile
-
-        variables = {
-            "$PWD": str(self.workdir),
-            "$HOME": os.path.expanduser("~"),
-            "$TMPDIR": tempfile.gettempdir(),
-            "$CACHE_HOME": self._get_cache_home(),
-            # Python paths
-            "$PYTHON_STDLIB": sysconfig.get_path("stdlib") or "",
-            "$PYTHON_SITE_PACKAGES": sysconfig.get_path("purelib") or "",
-            "$PYTHON_PLATLIB": sysconfig.get_path("platlib") or "",
-            "$PYTHON_PREFIX": sys.prefix,
-            # Python ecosystem
-            "$PIP_CACHE": self._get_pip_cache(),
-            "$VENV": os.environ.get("VIRTUAL_ENV", ""),
-        }
+        # Build dict from shared mappings (reversed: var -> path)
+        variables = {var: value for value, var in self._get_path_variable_mappings()}
 
         result = path
         for var, value in variables.items():
@@ -408,26 +418,7 @@ class BoxEngine:
 
     def _path_to_variable(self, path: str) -> str:
         """Convert an absolute path to a variable if possible."""
-        import sysconfig
-        import tempfile
-
-        # Order matters - more specific first
-        mappings = [
-            # Python ecosystem (most specific)
-            (self._get_pip_cache(), "$PIP_CACHE"),
-            (os.environ.get("VIRTUAL_ENV", ""), "$VENV"),
-            (sysconfig.get_path("purelib"), "$PYTHON_SITE_PACKAGES"),
-            (sysconfig.get_path("platlib"), "$PYTHON_PLATLIB"),
-            (sysconfig.get_path("stdlib"), "$PYTHON_STDLIB"),
-            (sys.prefix, "$PYTHON_PREFIX"),
-            # System paths - $PWD before $TMPDIR so workdir paths are preferred
-            (self._get_cache_home(), "$CACHE_HOME"),
-            (str(self.workdir), "$PWD"),
-            (tempfile.gettempdir(), "$TMPDIR"),
-            (os.path.expanduser("~"), "$HOME"),
-        ]
-
-        for prefix, var in mappings:
+        for prefix, var in self._get_path_variable_mappings():
             if prefix and path.startswith(prefix):
                 return path.replace(prefix, var, 1)
 
@@ -581,31 +572,47 @@ class BoxEngine:
         # Check if path is within an allowed directory
         return self._check_path_in_dir_list(path, allow_list)
 
-    def _check_read_permission(self, path: Path) -> bool:
-        """Check if reading a file is permitted."""
-        # Always block sensitive paths
-        if self._is_sensitive_path(path):
+    def _check_file_permission(
+        self,
+        path: Path,
+        config_key: str,
+        check_hash: bool = False,
+        check_sensitive: bool = False,
+    ) -> bool:
+        """Check if a file operation is permitted.
+
+        Args:
+            path: Resolved absolute path to check.
+            config_key: Config key (e.g., "allow_read", "allow_modify").
+            check_hash: If True, verify hash for entries that have one.
+            check_sensitive: If True, block sensitive paths.
+
+        Returns:
+            True if operation is allowed.
+        """
+        if check_sensitive and self._is_sensitive_path(path):
             return False
         return self._check_path_permission(
-            path, self.config.get("allow_read", []), check_hash=True
+            path, self.config.get(config_key, []), check_hash=check_hash
+        )
+
+    def _check_read_permission(self, path: Path) -> bool:
+        """Check if reading a file is permitted."""
+        return self._check_file_permission(
+            path, "allow_read", check_hash=True, check_sensitive=True
         )
 
     def _check_create_permission(self, path: Path) -> bool:
         """Check if creating a new file is permitted."""
-        return self._check_path_permission(path, self.config.get("allow_create", []))
+        return self._check_file_permission(path, "allow_create")
 
     def _check_modify_permission(self, path: Path) -> bool:
         """Check if modifying an existing file is permitted."""
-        return self._check_path_permission(
-            path, self.config.get("allow_modify", []), check_hash=True
-        )
+        return self._check_file_permission(path, "allow_modify", check_hash=True)
 
     def _check_delete_permission(self, path: Path) -> bool:
         """Check if deleting a file is permitted."""
-        # Always block sensitive paths
-        if self._is_sensitive_path(path):
-            return False
-        return self._check_path_permission(path, self.config.get("allow_delete", []))
+        return self._check_file_permission(path, "allow_delete", check_sensitive=True)
 
     def _check_file_delete(self, args: tuple) -> bool:
         """Check file deletion permission for 'os.remove'/'os.unlink' events."""
@@ -682,8 +689,6 @@ class BoxEngine:
 
     def _resolve_executable(self, executable: str) -> Path | None:
         """Resolve executable to absolute path, searching PATH if needed."""
-        import shutil
-
         # If already absolute, just resolve
         if os.path.isabs(executable):
             return Path(executable).resolve()
@@ -809,8 +814,6 @@ class BoxEngine:
 
         self._in_resolution = True
         try:
-            import socket
-
             results = socket.getaddrinfo(domain, port or 443, proto=socket.IPPROTO_TCP)
             for _family, _type, _proto, _canonname, sockaddr in results:
                 self._resolved_ips.add(sockaddr[0])
@@ -1070,8 +1073,6 @@ class BoxEngine:
         Returns:
             True if allowed, False otherwise.
         """
-        import socket
-
         if len(args) >= 2:
             sock_type = args[1]
             # Check for SOCK_RAW (value 3)
@@ -1115,126 +1116,148 @@ class BoxEngine:
                 return True
         return False
 
-    def _build_file_entry(self, path_var: str, resolved: Path | None) -> str | dict:
-        """Build config entry for file, with hash if it's a file (not directory)."""
-        if not resolved or not resolved.exists() or resolved.is_dir():
+    def _build_entry_with_hash(
+        self, path_var: str, resolved: Path | None, skip_dirs: bool = True
+    ) -> str | dict:
+        """Build config entry with hash if path is a readable file.
+
+        Args:
+            path_var: The path variable string (e.g., "$PWD/file.py").
+            resolved: The resolved Path object, or None.
+            skip_dirs: If True, return plain path_var for directories.
+
+        Returns:
+            Either path_var string or dict with path and hash.
+        """
+        if not resolved or not resolved.exists():
+            return path_var
+        if skip_dirs and resolved.is_dir():
             return path_var
         file_hash = self._compute_file_hash(resolved)
         if not file_hash:
             return path_var
         return {"path": path_var, "hash": file_hash}
 
-    def _build_executable_entry(
-        self, path_var: str, resolved: Path | None
-    ) -> str | dict:
-        """Build config entry for executable, with hash if available."""
-        if not resolved or not resolved.exists():
-            return path_var
-        file_hash = self._compute_file_hash(resolved)
-        if not file_hash:
-            return path_var
-        return {"path": path_var, "hash": file_hash}
+    def _load_existing_config(self) -> dict[str, Any]:
+        """Load existing config or return defaults."""
+        if self.config_path.exists():
+            try:
+                with open(self.config_path) as f:
+                    return toml.load(f) or {}
+            except (toml.TOMLError, OSError):
+                pass
+        return self._default_config()
+
+    def _write_config(self, config: dict[str, Any]) -> None:
+        """Write config to file."""
+        try:
+            with open(self.config_path, "w") as f:
+                toml.dump(config, f)
+        except OSError as e:
+            sys.stderr.write(f"[malwi-box] Warning: Could not save config: {e}\n")
+
+    def _save_file_decision(self, config: dict, decision: dict) -> None:
+        """Save a file access decision to config."""
+        details = decision.get("details", {})
+        path = details.get("path")
+        if not path:
+            return
+
+        mode = details.get("mode") or "r"
+        is_new = details.get("is_new_file", False)
+        is_write = any(c in mode for c in "wax+")
+
+        if is_write and is_new:
+            key = "allow_create"
+        elif is_write:
+            key = "allow_modify"
+        else:
+            key = "allow_read"
+
+        path_var = self._path_to_variable(path)
+        existing = config.get(key, [])
+        if self._entry_exists(existing, path_var):
+            return
+
+        if key in ("allow_read", "allow_modify"):
+            entry = self._build_entry_with_hash(path_var, Path(path))
+        else:
+            entry = path_var
+        config.setdefault(key, []).append(entry)
+
+    def _save_exec_decision(self, config: dict, decision: dict) -> None:
+        """Save an execution decision to config."""
+        event = decision["event"]
+        details = decision.get("details", {})
+
+        exe = details.get("executable") or details.get("library")
+        if exe:
+            exe_path = self._resolve_executable(exe)
+            exe_var = self._path_to_variable(exe)
+            existing = config.get("allow_executables", [])
+            if not self._entry_exists(existing, exe_var):
+                entry = self._build_entry_with_hash(exe_var, exe_path, skip_dirs=False)
+                config.setdefault("allow_executables", []).append(entry)
+
+        if event == "subprocess.Popen":
+            self._save_shell_command(config, details.get("command"))
+
+    def _save_shell_command(self, config: dict, cmd: str | None) -> None:
+        """Save a shell command to config if not already present."""
+        if cmd and cmd not in config.get("allow_shell_commands", []):
+            config.setdefault("allow_shell_commands", []).append(cmd)
+
+    def _save_network_decision(self, config: dict, decision: dict) -> None:
+        """Save a network-related decision to config."""
+        event = decision["event"]
+        details = decision.get("details", {})
+
+        if event in ("socket.getaddrinfo", "socket.gethostbyname"):
+            domain = details.get("domain")
+            port = details.get("port")
+            if domain:
+                entry = f"{domain}:{port}" if port else domain
+                if entry not in config.get("allow_domains", []):
+                    config.setdefault("allow_domains", []).append(entry)
+
+        elif event in ("urllib.Request", "http.request"):
+            url = details.get("url")
+            method = details.get("method")
+            if url:
+                parsed = urlparse(url)
+                url_pattern = f"{parsed.netloc}{parsed.path}"
+                if url_pattern not in config.get("allow_http_urls", []):
+                    config.setdefault("allow_http_urls", []).append(url_pattern)
+            if method:
+                method_upper = method.upper()
+                if method_upper not in config.get("allow_http_methods", []):
+                    config.setdefault("allow_http_methods", []).append(method_upper)
 
     def save_decisions(self) -> None:
         """Merge recorded decisions into config file."""
         if not self._decisions:
             return
 
-        # Load existing config or start fresh
-        if self.config_path.exists():
-            try:
-                with open(self.config_path) as f:
-                    config = toml.load(f) or {}
-            except (toml.TOMLError, OSError):
-                config = self._default_config()
-        else:
-            config = self._default_config()
+        config = self._load_existing_config()
 
-        # Process decisions and update config
         for decision in self._decisions:
             if not decision.get("allowed"):
                 continue
 
             event = decision["event"]
-            details = decision.get("details", {})
 
             if event == "open":
-                path = details.get("path")
-                if not path:
-                    continue
-                mode = details.get("mode") or "r"
-                is_new = details.get("is_new_file", False)
-                is_write = any(c in mode for c in "wax+")
-
-                if is_write and is_new:
-                    key = "allow_create"
-                elif is_write:
-                    key = "allow_modify"
-                else:
-                    key = "allow_read"
-
-                # Convert path to variable if possible for portability
-                path_obj = Path(path)
-                path_var = self._path_to_variable(path)
-                existing = config.get(key, [])
-                if not self._entry_exists(existing, path_var):
-                    # Hash for read/modify, plain path for create (doesn't exist yet)
-                    if key in ("allow_read", "allow_modify"):
-                        entry = self._build_file_entry(path_var, path_obj)
-                    else:
-                        entry = path_var
-                    config.setdefault(key, []).append(entry)
-
+                self._save_file_decision(config, decision)
             elif event in EXEC_EVENTS:
-                exe = details.get("executable") or details.get("library")
-                if exe:
-                    exe_path = self._resolve_executable(exe)
-                    exe_var = self._path_to_variable(exe)
-                    existing = config.get("allow_executables", [])
-                    if not self._entry_exists(existing, exe_var):
-                        entry = self._build_executable_entry(exe_var, exe_path)
-                        config.setdefault("allow_executables", []).append(entry)
-                # Also save shell command for subprocess.Popen
-                if event == "subprocess.Popen":
-                    cmd = details.get("command")
-                    if cmd and cmd not in config.get("allow_shell_commands", []):
-                        config.setdefault("allow_shell_commands", []).append(cmd)
-
+                self._save_exec_decision(config, decision)
             elif event == "os.system":
-                cmd = details.get("command")
-                if cmd and cmd not in config.get("allow_shell_commands", []):
-                    config.setdefault("allow_shell_commands", []).append(cmd)
+                cmd = decision.get("details", {}).get("command")
+                self._save_shell_command(config, cmd)
+            elif event in ("socket.getaddrinfo", "socket.gethostbyname",
+                          "urllib.Request", "http.request"):
+                self._save_network_decision(config, decision)
 
-            elif event in ("socket.getaddrinfo", "socket.gethostbyname"):
-                domain = details.get("domain")
-                port = details.get("port")
-                if domain:
-                    # Save as "domain:port" if port specified, otherwise just domain
-                    entry = f"{domain}:{port}" if port else domain
-                    if entry not in config.get("allow_domains", []):
-                        config.setdefault("allow_domains", []).append(entry)
-
-            elif event in ("urllib.Request", "http.request"):
-                url = details.get("url")
-                method = details.get("method")
-                if url:
-                    # Extract domain and path to create pattern
-                    parsed = urlparse(url)
-                    url_pattern = f"{parsed.netloc}{parsed.path}"
-                    if url_pattern not in config.get("allow_http_urls", []):
-                        config.setdefault("allow_http_urls", []).append(url_pattern)
-                # Save HTTP method if specified
-                if method:
-                    method_upper = method.upper()
-                    if method_upper not in config.get("allow_http_methods", []):
-                        config.setdefault("allow_http_methods", []).append(method_upper)
-
-        # Write updated config
-        try:
-            with open(self.config_path, "w") as f:
-                toml.dump(config, f)
-        except OSError as e:
-            sys.stderr.write(f"[malwi-box] Warning: Could not save config: {e}\n")
+        self._write_config(config)
 
     def _check_env_read(self, args: tuple) -> bool:
         """Check if reading an env var is allowed.
