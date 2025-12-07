@@ -1,3 +1,5 @@
+from importlib.metadata import version
+
 from malwi_box.engine import BoxEngine
 from malwi_box.formatting import extract_decision_details, format_event
 from malwi_box.hook import (
@@ -13,5 +15,6 @@ __all__ = [
     "BoxEngine",
     "format_event",
     "extract_decision_details",
+    "__version__",
 ]
-__version__ = "0.1.0"
+__version__ = version("malwi-box")

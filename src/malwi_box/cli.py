@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 
+from malwi_box import __version__
 from malwi_box.formatting import format_event as _format_event  # noqa: F401
 
 # Templates import the hook modules which auto-setup on import
@@ -186,6 +187,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Python audit hook sandbox",
         usage="%(prog)s {run,eval,install,config} ...",
+    )
+    parser.add_argument(
+        "--version",
+        "-v",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
