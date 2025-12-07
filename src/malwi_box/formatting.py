@@ -113,6 +113,20 @@ def format_event(event: str, args: tuple) -> str:
         method = args[1] if len(args) > 1 else "GET"
         return f"HTTP {method}: {_truncate(str(url), MAX_CMD_LEN)}"
 
+    # Info-only events (encoding/crypto)
+    if event == "encoding.base64":
+        operation = args[0] if args else "unknown"
+        return f"Base64: {operation}"
+
+    if event == "crypto.cipher":
+        operation = args[0] if args else "unknown"
+        action = "Encrypt" if "encrypt" in str(operation) else "Decrypt"
+        return f"Cipher: {action}"
+
+    if event == "crypto.fernet":
+        operation = args[0] if args else "unknown"
+        return f"Fernet: {operation}"
+
     if event == "socket.__new__":
         # Raw socket creation - args: (family, type, proto)
         import socket

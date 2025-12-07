@@ -429,6 +429,100 @@ static void check_http_function_call(PyFrameObject *frame) {
     Py_DECREF(code);
 }
 
+// Check if current frame is an encoding function call (base64, binascii)
+static void check_encoding_function_call(PyFrameObject *frame) {
+    PyCodeObject *code = PyFrame_GetCode(frame);
+    if (code == NULL) return;
+
+    PyObject *name_obj = code->co_name;
+    PyObject *filename_obj = code->co_filename;
+
+    if (name_obj == NULL || filename_obj == NULL) {
+        Py_DECREF(code);
+        return;
+    }
+
+    const char *func_name = PyUnicode_AsUTF8(name_obj);
+    const char *filename = PyUnicode_AsUTF8(filename_obj);
+
+    if (func_name == NULL || filename == NULL) {
+        Py_DECREF(code);
+        return;
+    }
+
+    // base64 module - check for encode/decode functions
+    if (strstr(filename, "base64.py") != NULL) {
+        if (strstr(func_name, "encode") != NULL || strstr(func_name, "decode") != NULL) {
+            PyObject *op_str = PyUnicode_FromString(func_name);
+            if (op_str != NULL) {
+                PyObject *args = PyTuple_Pack(1, op_str);
+                if (args != NULL) {
+                    invoke_audit_callback("encoding.base64", args);
+                    Py_DECREF(args);
+                }
+                Py_DECREF(op_str);
+            }
+        }
+    }
+
+    Py_DECREF(code);
+}
+
+// Check if current frame is a crypto function call (cryptography library)
+static void check_crypto_function_call(PyFrameObject *frame) {
+    PyCodeObject *code = PyFrame_GetCode(frame);
+    if (code == NULL) return;
+
+    PyObject *name_obj = code->co_name;
+    PyObject *filename_obj = code->co_filename;
+
+    if (name_obj == NULL || filename_obj == NULL) {
+        Py_DECREF(code);
+        return;
+    }
+
+    const char *func_name = PyUnicode_AsUTF8(name_obj);
+    const char *filename = PyUnicode_AsUTF8(filename_obj);
+
+    if (func_name == NULL || filename == NULL) {
+        Py_DECREF(code);
+        return;
+    }
+
+    // cryptography library - cipher operations
+    if (strstr(filename, "cryptography") != NULL && strstr(filename, "ciphers") != NULL) {
+        if (streq(func_name, "encryptor") || streq(func_name, "decryptor")) {
+            PyObject *op_str = PyUnicode_FromString(func_name);
+            if (op_str != NULL) {
+                PyObject *args = PyTuple_Pack(1, op_str);
+                if (args != NULL) {
+                    invoke_audit_callback("crypto.cipher", args);
+                    Py_DECREF(args);
+                }
+                Py_DECREF(op_str);
+            }
+        }
+    }
+
+    // Fernet (high-level encryption)
+    if (strstr(filename, "fernet.py") != NULL) {
+        if (streq(func_name, "encrypt") || streq(func_name, "decrypt") ||
+            streq(func_name, "encrypt_at_time") || streq(func_name, "decrypt_at_time")) {
+            PyObject *op_str = PyUnicode_FromString(func_name);
+            if (op_str != NULL) {
+                PyObject *args = PyTuple_Pack(1, op_str);
+                if (args != NULL) {
+                    invoke_audit_callback("crypto.fernet", args);
+                    Py_DECREF(args);
+                }
+                Py_DECREF(op_str);
+            }
+        }
+    }
+
+    Py_DECREF(code);
+}
+
 // Profile hook function for monitoring env var access and HTTP requests
 static int profile_hook(PyObject *obj, PyFrameObject *frame, int what, PyObject *arg) {
     // Skip if finalizing
@@ -445,9 +539,11 @@ static int profile_hook(PyObject *obj, PyFrameObject *frame, int what, PyObject 
         return 0;
     }
 
-    // Handle Python function calls (PyTrace_CALL) for HTTP interception
+    // Handle Python function calls (PyTrace_CALL) for HTTP/encoding/crypto interception
     if (what == PyTrace_CALL) {
         check_http_function_call(frame);
+        check_encoding_function_call(frame);
+        check_crypto_function_call(frame);
         return 0;
     }
 

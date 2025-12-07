@@ -9,6 +9,7 @@ import sys
 
 # ANSI color codes
 RED = "\033[91m"
+CYAN = "\033[36m"
 RESET = "\033[0m"
 
 
@@ -19,7 +20,7 @@ def setup_hook(engine=None):
         engine: BoxEngine instance. If None, creates a new one.
     """
     from malwi_box import format_event, install_hook
-    from malwi_box.engine import BoxEngine
+    from malwi_box.engine import INFO_ONLY_EVENTS, BoxEngine
 
     if engine is None:
         engine = BoxEngine()
@@ -33,6 +34,13 @@ def setup_hook(engine=None):
 
         in_hook = True
         try:
+            # Info-only events: always log, never block
+            if event in INFO_ONLY_EVENTS:
+                msg = f"{CYAN}[malwi-box] {format_event(event, args)}{RESET}\n"
+                sys.stderr.write(msg)
+                sys.stderr.flush()
+                return
+
             if not engine.check_permission(event, args):
                 msg = f"{RED}[malwi-box] Blocked: {format_event(event, args)}{RESET}\n"
                 sys.stderr.write(msg)

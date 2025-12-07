@@ -15,6 +15,7 @@ BLOCKLIST = {"builtins.input", "builtins.input/result"}
 RED = "\033[91m"
 ORANGE = "\033[93m"
 YELLOW = "\033[33m"
+CYAN = "\033[36m"
 RESET = "\033[0m"
 
 # Events that replace the current process - atexit handlers won't run
@@ -110,7 +111,7 @@ def setup_hook(engine=None):
         engine: BoxEngine instance. If None, creates a new one.
     """
     from malwi_box import extract_decision_details, format_event, install_hook
-    from malwi_box.engine import BoxEngine
+    from malwi_box.engine import INFO_ONLY_EVENTS, BoxEngine
     from malwi_box.formatting import format_stack_trace
 
     if engine is None:
@@ -131,6 +132,16 @@ def setup_hook(engine=None):
         nonlocal in_hook
         if in_hook:
             return  # Prevent recursion
+
+        # Info-only events: log immediately, no approval needed
+        if event in INFO_ONLY_EVENTS:
+            in_hook = True
+            try:
+                msg = f"{CYAN}[malwi-box] {format_event(event, args)}{RESET}"
+                print(msg, file=sys.stderr)
+            finally:
+                in_hook = False
+            return
 
         # Check if already approved this session
         key = (event, make_hashable(args))

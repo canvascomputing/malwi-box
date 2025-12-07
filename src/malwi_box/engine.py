@@ -33,6 +33,15 @@ EXEC_EVENTS = frozenset(
 # Events that run shell commands (checked against allow_shell_commands)
 SHELL_EVENTS = frozenset({"subprocess.Popen", "os.system"})
 
+# Events that are info-only (never blocked, always logged for security awareness)
+INFO_ONLY_EVENTS = frozenset(
+    {
+        "encoding.base64",
+        "crypto.cipher",
+        "crypto.fernet",
+    }
+)
+
 # Security-sensitive paths that should NEVER be readable by default
 # Even if a broader path like $OS_SYSTEM is allowed, these are blocked
 SENSITIVE_PATHS = [

@@ -37,10 +37,26 @@ uv tool install malwi-box
 
 ## Quick Start
 
-```
+```bash
+# Block file access
 $ malwi-box eval "open('/etc/passwd').read()"
-
 [malwi-box] Blocked: Read file: /etc/passwd
+
+# Block network requests
+$ malwi-box eval "import urllib.request; urllib.request.urlopen('https://evil.com')"
+[malwi-box] Blocked: DNS lookup: evil.com
+
+# Block shell commands
+$ malwi-box eval "import os; os.system('whoami')"
+[malwi-box] Blocked: Shell command: /bin/sh -c whoami
+
+# Block subprocess execution
+$ malwi-box eval "import subprocess; subprocess.run(['curl', 'https://evil.com'])"
+[malwi-box] Blocked: Execute: /usr/bin/curl
+
+# Log suspicious encoding (info-only, not blocked)
+$ malwi-box eval "import base64; base64.b64encode(b'secret')"
+[malwi-box] Base64: b64encode
 ```
 
 ## Commands
@@ -73,7 +89,7 @@ Install pip packages with sandboxing. Most malware packages perform malicious ac
 malwi-box install package
 malwi-box install package --version 1.2.3
 malwi-box install -r requirements.txt
-malwi-box install --review package  # approve/deny each operation
+malwi-box install --review package # approve/deny each operation
 ```
 
 ### config
@@ -81,7 +97,7 @@ malwi-box install --review package  # approve/deny each operation
 Manage configuration.
 
 ```bash
-malwi-box config create             # creates .malwi-box.toml
+malwi-box config create # creates .malwi-box.toml
 malwi-box config create --path FILE
 ```
 
@@ -230,6 +246,21 @@ Uses Python's PEP 578 audit hooks via a C++ extension to intercept:
 - Blocks `ctypes.dlopen` by default to prevent loading native code that bypasses hooks
 
 Blocked operations terminate immediately with exit code 78.
+
+### Info-Only Events
+
+Some operations are logged for security awareness but never blocked. They help identify potentially suspicious behavior during malware analysis:
+
+| Event | Description | Example Output |
+|-------|-------------|----------------|
+| `encoding.base64` | Base64 encoding/decoding | `Base64: b64encode` |
+| `crypto.cipher` | Cipher encryption/decryption (cryptography library) | `Cipher: Encrypt` |
+| `crypto.fernet` | Fernet encryption/decryption | `Fernet: encrypt` |
+
+These events are always logged regardless of mode (run, force, or review) and cannot be disabled. They help identify:
+- Data exfiltration attempts (base64 encoding)
+- Ransomware behavior (encryption operations)
+- Obfuscation techniques
 
 ## Limitations
 
