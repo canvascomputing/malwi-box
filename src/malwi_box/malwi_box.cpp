@@ -1,3 +1,7 @@
+// =============================================================================
+// Section 1: Includes and Version Compatibility
+// =============================================================================
+
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include <string.h>
@@ -25,7 +29,10 @@ static inline PyObject* PyFrame_GetLocals(PyFrameObject *frame) {
 }
 #endif
 
-// Module state structure
+// =============================================================================
+// Section 2: Module State and Globals
+// =============================================================================
+
 typedef struct {
     PyObject *callback;  // User-provided Python callable
     PyObject *blocklist; // Set of event names to block
@@ -50,7 +57,7 @@ static PyObject *g_os_environ_original = NULL;
 static int g_in_env_callback = 0;
 
 // =============================================================================
-// AuditedEnviron: C-level wrapper for os.environ that fires audit events
+// Section 3: AuditedEnviron Type - C wrapper for os.environ
 // =============================================================================
 
 typedef struct {
@@ -158,11 +165,19 @@ static PyObject *AuditedEnviron_copy(AuditedEnvironObject *self, PyObject *Py_UN
 }
 
 static PyObject *AuditedEnviron_pop(AuditedEnvironObject *self, PyObject *args) {
-    return PyObject_Call(PyObject_GetAttrString(self->wrapped, "pop"), args, NULL);
+    PyObject *method = PyObject_GetAttrString(self->wrapped, "pop");
+    if (method == NULL) return NULL;
+    PyObject *result = PyObject_Call(method, args, NULL);
+    Py_DECREF(method);
+    return result;
 }
 
 static PyObject *AuditedEnviron_setdefault(AuditedEnvironObject *self, PyObject *args) {
-    return PyObject_Call(PyObject_GetAttrString(self->wrapped, "setdefault"), args, NULL);
+    PyObject *method = PyObject_GetAttrString(self->wrapped, "setdefault");
+    if (method == NULL) return NULL;
+    PyObject *result = PyObject_Call(method, args, NULL);
+    Py_DECREF(method);
+    return result;
 }
 
 static PyObject *AuditedEnviron_update(AuditedEnvironObject *self, PyObject *args, PyObject *kwargs) {
@@ -241,7 +256,7 @@ static PyObject *AuditedEnviron_New(PyObject *wrapped) {
 }
 
 // =============================================================================
-// audited_getenv: C-level replacement for os.getenv that fires audit events
+// Section 4: audited_getenv - C replacement for os.getenv
 // =============================================================================
 
 static PyObject *audited_getenv(PyObject *self, PyObject *args, PyObject *kwargs) {
@@ -280,6 +295,10 @@ static PyMethodDef audited_getenv_def = {
     METH_VARARGS | METH_KEYWORDS,
     "Get an environment variable (audited)."
 };
+
+// =============================================================================
+// Section 5: Audit Hook Infrastructure
+// =============================================================================
 
 // Check if a string matches (for quick C-level checks)
 static inline int streq(const char *a, const char *b) {
@@ -433,6 +452,59 @@ static void invoke_audit_callback(const char *event, PyObject *args_tuple) {
         PyErr_Clear();
     } else {
         Py_DECREF(result);
+    }
+}
+
+// =============================================================================
+// Section 6: Profile Hook - HTTP/Encoding/Crypto Detection
+// =============================================================================
+
+// Frame function info for quick checks
+typedef struct {
+    const char *func_name;
+    const char *filename;
+    PyCodeObject *code;  // For cleanup
+} FrameFuncInfo;
+
+// Extract function info from frame (returns 0 on failure, 1 on success)
+static int get_frame_func_info(PyFrameObject *frame, FrameFuncInfo *info) {
+    info->code = PyFrame_GetCode(frame);
+    if (info->code == NULL) return 0;
+
+    PyObject *name_obj = info->code->co_name;
+    PyObject *filename_obj = info->code->co_filename;
+
+    if (name_obj == NULL || filename_obj == NULL) {
+        Py_DECREF(info->code);
+        return 0;
+    }
+
+    info->func_name = PyUnicode_AsUTF8(name_obj);
+    info->filename = PyUnicode_AsUTF8(filename_obj);
+
+    if (info->func_name == NULL || info->filename == NULL) {
+        Py_DECREF(info->code);
+        return 0;
+    }
+
+    return 1;
+}
+
+// Release frame function info
+static void release_frame_func_info(FrameFuncInfo *info) {
+    Py_DECREF(info->code);
+}
+
+// Fire an audit event with a single string argument
+static void fire_simple_event(const char *event, const char *arg) {
+    PyObject *arg_str = PyUnicode_FromString(arg);
+    if (arg_str != NULL) {
+        PyObject *args = PyTuple_Pack(1, arg_str);
+        if (args != NULL) {
+            invoke_audit_callback(event, args);
+            Py_DECREF(args);
+        }
+        Py_DECREF(arg_str);
     }
 }
 
@@ -606,156 +678,81 @@ static void extract_http_client_request(PyFrameObject *frame) {
 
 // Check if current frame is an HTTP request function
 static void check_http_function_call(PyFrameObject *frame) {
-    PyCodeObject *code = PyFrame_GetCode(frame);
-    if (code == NULL) return;
-
-    PyObject *name_obj = code->co_name;
-    PyObject *filename_obj = code->co_filename;
-
-    if (name_obj == NULL || filename_obj == NULL) {
-        Py_DECREF(code);
-        return;
-    }
-
-    const char *func_name = PyUnicode_AsUTF8(name_obj);
-    const char *filename = PyUnicode_AsUTF8(filename_obj);
-
-    if (func_name == NULL || filename == NULL) {
-        Py_DECREF(code);
-        return;
-    }
+    FrameFuncInfo info;
+    if (!get_frame_func_info(frame, &info)) return;
 
     // Quick check: only interested in "urlopen" or "request" functions
     int is_http_func = 0;
 
-    if (streq(func_name, "urlopen")) {
+    if (streq(info.func_name, "urlopen")) {
         // urllib.request.urlopen or urllib3 HTTPConnectionPool.urlopen
-        if (strstr(filename, "urllib/request.py") != NULL ||
-            strstr(filename, "urllib3/connectionpool.py") != NULL) {
+        if (strstr(info.filename, "urllib/request.py") != NULL ||
+            strstr(info.filename, "urllib3/connectionpool.py") != NULL) {
             is_http_func = 1;
         }
-    } else if (streq(func_name, "request")) {
+    } else if (streq(info.func_name, "request")) {
         // requests Session.request, httpx Client.request, or http.client HTTPConnection.request
-        if (strstr(filename, "requests/sessions.py") != NULL ||
-            strstr(filename, "httpx/_client.py") != NULL ||
-            strstr(filename, "http/client.py") != NULL) {
+        if (strstr(info.filename, "requests/sessions.py") != NULL ||
+            strstr(info.filename, "httpx/_client.py") != NULL ||
+            strstr(info.filename, "http/client.py") != NULL) {
             is_http_func = 1;
         }
-    } else if (streq(func_name, "_request")) {
+    } else if (streq(info.func_name, "_request")) {
         // aiohttp ClientSession._request
-        if (strstr(filename, "aiohttp/client.py") != NULL) {
+        if (strstr(info.filename, "aiohttp/client.py") != NULL) {
             is_http_func = 1;
         }
-    }
-
-    int is_http_client = 0;
-    if (is_http_func && strstr(filename, "http/client.py") != NULL) {
-        is_http_client = 1;
     }
 
     if (is_http_func) {
-        if (is_http_client) {
+        if (strstr(info.filename, "http/client.py") != NULL) {
             extract_http_client_request(frame);
         } else {
             extract_and_report_http_request(frame);
         }
     }
 
-    Py_DECREF(code);
+    release_frame_func_info(&info);
 }
 
 // Check if current frame is an encoding function call (base64, binascii)
 static void check_encoding_function_call(PyFrameObject *frame) {
-    PyCodeObject *code = PyFrame_GetCode(frame);
-    if (code == NULL) return;
-
-    PyObject *name_obj = code->co_name;
-    PyObject *filename_obj = code->co_filename;
-
-    if (name_obj == NULL || filename_obj == NULL) {
-        Py_DECREF(code);
-        return;
-    }
-
-    const char *func_name = PyUnicode_AsUTF8(name_obj);
-    const char *filename = PyUnicode_AsUTF8(filename_obj);
-
-    if (func_name == NULL || filename == NULL) {
-        Py_DECREF(code);
-        return;
-    }
+    FrameFuncInfo info;
+    if (!get_frame_func_info(frame, &info)) return;
 
     // base64 module - check for encode/decode functions
-    if (strstr(filename, "base64.py") != NULL) {
-        if (strstr(func_name, "encode") != NULL || strstr(func_name, "decode") != NULL) {
-            PyObject *op_str = PyUnicode_FromString(func_name);
-            if (op_str != NULL) {
-                PyObject *args = PyTuple_Pack(1, op_str);
-                if (args != NULL) {
-                    invoke_audit_callback("encoding.base64", args);
-                    Py_DECREF(args);
-                }
-                Py_DECREF(op_str);
-            }
+    if (strstr(info.filename, "base64.py") != NULL) {
+        if (strstr(info.func_name, "encode") != NULL ||
+            strstr(info.func_name, "decode") != NULL) {
+            fire_simple_event("encoding.base64", info.func_name);
         }
     }
 
-    Py_DECREF(code);
+    release_frame_func_info(&info);
 }
 
 // Check if current frame is a crypto function call (cryptography library)
 static void check_crypto_function_call(PyFrameObject *frame) {
-    PyCodeObject *code = PyFrame_GetCode(frame);
-    if (code == NULL) return;
-
-    PyObject *name_obj = code->co_name;
-    PyObject *filename_obj = code->co_filename;
-
-    if (name_obj == NULL || filename_obj == NULL) {
-        Py_DECREF(code);
-        return;
-    }
-
-    const char *func_name = PyUnicode_AsUTF8(name_obj);
-    const char *filename = PyUnicode_AsUTF8(filename_obj);
-
-    if (func_name == NULL || filename == NULL) {
-        Py_DECREF(code);
-        return;
-    }
+    FrameFuncInfo info;
+    if (!get_frame_func_info(frame, &info)) return;
 
     // cryptography library - cipher operations
-    if (strstr(filename, "cryptography") != NULL && strstr(filename, "ciphers") != NULL) {
-        if (streq(func_name, "encryptor") || streq(func_name, "decryptor")) {
-            PyObject *op_str = PyUnicode_FromString(func_name);
-            if (op_str != NULL) {
-                PyObject *args = PyTuple_Pack(1, op_str);
-                if (args != NULL) {
-                    invoke_audit_callback("crypto.cipher", args);
-                    Py_DECREF(args);
-                }
-                Py_DECREF(op_str);
-            }
+    if (strstr(info.filename, "cryptography") != NULL &&
+        strstr(info.filename, "ciphers") != NULL) {
+        if (streq(info.func_name, "encryptor") || streq(info.func_name, "decryptor")) {
+            fire_simple_event("crypto.cipher", info.func_name);
         }
     }
 
     // Fernet (high-level encryption)
-    if (strstr(filename, "fernet.py") != NULL) {
-        if (streq(func_name, "encrypt") || streq(func_name, "decrypt") ||
-            streq(func_name, "encrypt_at_time") || streq(func_name, "decrypt_at_time")) {
-            PyObject *op_str = PyUnicode_FromString(func_name);
-            if (op_str != NULL) {
-                PyObject *args = PyTuple_Pack(1, op_str);
-                if (args != NULL) {
-                    invoke_audit_callback("crypto.fernet", args);
-                    Py_DECREF(args);
-                }
-                Py_DECREF(op_str);
-            }
+    if (strstr(info.filename, "fernet.py") != NULL) {
+        if (streq(info.func_name, "encrypt") || streq(info.func_name, "decrypt") ||
+            streq(info.func_name, "encrypt_at_time") || streq(info.func_name, "decrypt_at_time")) {
+            fire_simple_event("crypto.fernet", info.func_name);
         }
     }
 
-    Py_DECREF(code);
+    release_frame_func_info(&info);
 }
 
 // Profile hook function for HTTP/encoding/crypto interception
@@ -787,7 +784,10 @@ static int profile_hook(PyObject *obj, PyFrameObject *frame, int what, PyObject 
     return 0;
 }
 
-// Python-callable function to set the callback
+// =============================================================================
+// Section 7: Module Interface (set_callback, clear_callback, set_blocklist)
+// =============================================================================
+
 static PyObject* set_callback(PyObject *self, PyObject *args) {
     PyObject *callback;
 
@@ -922,7 +922,10 @@ static PyObject* set_blocklist(PyObject *self, PyObject *args) {
     Py_RETURN_NONE;
 }
 
-// Module methods
+// =============================================================================
+// Section 8: Module Definition and Initialization
+// =============================================================================
+
 static PyMethodDef module_methods[] = {
     {"set_callback", set_callback, METH_VARARGS,
      "Set the audit hook callback function.\n\n"
