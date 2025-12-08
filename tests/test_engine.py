@@ -1563,6 +1563,34 @@ class TestURLPermissions:
         assert "allow_http_urls" in saved_config
         assert "api.example.com/v1/users" in saved_config["allow_http_urls"]
 
+    def test_localhost_urls_always_allowed(self, tmp_path):
+        """Test that HTTP requests to localhost are automatically allowed.
+
+        This is consistent with _check_socket_connect which always allows
+        localhost/loopback connections. Common use case: local PyPI proxies
+        like devpi running on localhost.
+        """
+        config = {"allow_http_urls": []}  # Empty = block all
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Should be allowed despite empty allow_http_urls
+        assert engine.check_permission(
+            "http.request", ("http://localhost:8080/api", "GET")
+        )
+        assert engine.check_permission(
+            "http.request", ("https://127.0.0.1:2677/simple", "GET")
+        )
+        assert engine.check_permission(
+            "http.request", ("http://[::1]:8000/", "GET")
+        )
+        # Also test urllib.Request event
+        assert engine.check_permission(
+            "urllib.Request", ("http://localhost:5000/test", None, {}, "GET")
+        )
+
 
 class TestURLPatternMatching:
     """Tests for the _url_matches_pattern helper method."""

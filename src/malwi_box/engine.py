@@ -1029,6 +1029,12 @@ class BoxEngine:
         if not url or not isinstance(url, str):
             return True
 
+        # Allow localhost/loopback (consistent with _check_socket_connect)
+        parsed = urlparse(url if "://" in url else f"https://{url}")
+        host = parsed.hostname or ""
+        if host in ("localhost", "127.0.0.1", "::1"):
+            return True
+
         # Check HTTP method restrictions (expand variables like $ALL_HTTP_METHODS)
         method = args[3] if len(args) > 3 else (args[1] if len(args) > 1 else None)
         if isinstance(method, str):
