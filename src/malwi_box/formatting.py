@@ -32,7 +32,9 @@ def _build_command(exe, cmd_args) -> str:
         first_arg = str(cmd_args[0])
         exe_str = str(exe)
         # Check if first arg already contains the executable (argv[0] convention)
-        if first_arg == exe_str or os.path.basename(first_arg) == os.path.basename(exe_str):
+        first_base = os.path.basename(first_arg)
+        exe_base = os.path.basename(exe_str)
+        if first_arg == exe_str or first_base == exe_base:
             return " ".join(str(a) for a in cmd_args)
         # Args don't include exe, prepend it
         return " ".join([exe_str] + [str(a) for a in cmd_args])

@@ -236,17 +236,20 @@ class TestCommandPatternMatching:
 
         # Different git clone commands should all match the pattern
         assert engine.check_permission(
-            "subprocess.Popen", ("git", ["clone", "https://github.com/user/repo1"], None, None)
+            "subprocess.Popen",
+            ("git", ["clone", "https://github.com/user/repo1"], None, None),
         )
         assert engine.check_permission(
-            "subprocess.Popen", ("git", ["clone", "https://github.com/user/repo2"], None, None)
+            "subprocess.Popen",
+            ("git", ["clone", "https://github.com/user/repo2"], None, None),
         )
         assert engine.check_permission(
-            "subprocess.Popen", ("git", ["clone", "--depth=1", "https://example.com/repo"], None, None)
+            "subprocess.Popen",
+            ("git", ["clone", "--depth=1", "https://example.com/repo"], None, None),
         )
 
     def test_saved_command_skipped_if_pattern_covers(self, tmp_path):
-        """Test that saving a command is skipped if existing pattern already covers it."""
+        """Test that saving a command is skipped if pattern already covers it."""
         config = {"allow_shell_commands": ["git clone *"]}
         config_path = tmp_path / ".malwi-box.toml"
         config_path.write_text(toml.dumps(config))

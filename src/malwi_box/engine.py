@@ -1300,8 +1300,12 @@ class BoxEngine:
             elif event == "os.system":
                 cmd = decision.get("details", {}).get("command")
                 self._save_shell_command(config, cmd)
-            elif event in ("socket.getaddrinfo", "socket.gethostbyname",
-                          "urllib.Request", "http.request"):
+            elif event in (
+                "socket.getaddrinfo",
+                "socket.gethostbyname",
+                "urllib.Request",
+                "http.request",
+            ):
                 self._save_network_decision(config, decision)
 
         self._write_config(config)
