@@ -471,6 +471,21 @@ class BoxEngine:
             var_name = var_name.decode("utf-8", errors="replace")
         return var_name in SENSITIVE_ENV_VARS
 
+    def is_info_only_env_read(self, event: str, args: tuple) -> bool:
+        """Check if this is a non-sensitive env var read (info-only).
+
+        Returns True if this is an env read event for a non-sensitive var.
+        These should be logged as info events, not blocked.
+        """
+        if event not in ("os.getenv", "os.environ.get"):
+            return False
+        if not args:
+            return False
+        var_name = args[0]
+        if isinstance(var_name, bytes):
+            var_name = var_name.decode("utf-8", errors="replace")
+        return not self._is_sensitive_env_var(var_name)
+
     def _resolve_path(self, path: str | Path) -> Path:
         """Resolve a path to an absolute path, expanding variables."""
         if isinstance(path, str):

@@ -149,6 +149,11 @@ def _create_hook_callback(
                 _log_info_event(event, args)
                 return
 
+            # Non-sensitive env var reads are info-only
+            if engine.is_info_only_env_read(event, args):
+                _log_info_event(event, args)
+                return
+
             if not engine.check_permission(event, args):
                 on_violation(event, args)
         finally:
@@ -345,6 +350,17 @@ def setup_review_hook(engine: BoxEngine | None = None) -> None:
                 in_hook = False
             return
 
+        # Non-sensitive env var reads are info-only
+        if engine.is_info_only_env_read(event, args):
+            in_hook = True
+            try:
+                formatted = format_event(event, args)
+                msg = f"{Color.CYAN}[malwi-box] {formatted}{Color.RESET}"
+                print(msg, file=sys.stderr)
+            finally:
+                in_hook = False
+            return
+
         # Check if already approved this session
         key = (event, make_hashable(args))
         if key in session_allowed:
@@ -391,9 +407,8 @@ def setup_review_hook(engine: BoxEngine | None = None) -> None:
                 port = args[1] if len(args) > 1 else None
                 engine._cache_resolved_ips(host, port)
 
-            # Process-replacing events need immediate save (atexit won't run)
-            if event in PROCESS_REPLACING_EVENTS:
-                engine.save_decisions()
+            # Save immediately after each approval
+            engine.save_decisions()
         finally:
             in_hook = False
 
