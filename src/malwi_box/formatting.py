@@ -307,9 +307,9 @@ def extract_decision_details(event: str, args: tuple) -> dict:
 
 
 def format_stack_trace(caller_info: list) -> str:
-    """Format caller info as a minimal stack trace.
+    """Format caller info as a stack trace with full paths.
 
-    Top frame gets arrow and code context. Rest are compact.
+    Top frame gets arrow and code context. Rest show full paths.
 
     Args:
         caller_info: List of (filename, lineno, function, code_context) tuples.
@@ -322,16 +322,13 @@ def format_stack_trace(caller_info: list) -> str:
 
     lines = []
     for i, (filename, lineno, func, code) in enumerate(caller_info[:5]):
-        # Use basename for cleaner output
-        basename = os.path.basename(filename)
-
         if i == 0:
             # Top frame: arrow + code context
-            lines.append(f"  → {basename}:{lineno} in {func}")
+            lines.append(f"  → {filename}:{lineno} in {func}()")
             if code:
                 lines.append(f"      {code}")
         else:
-            # Other frames: minimal
-            lines.append(f"    {basename}:{lineno} in {func}")
+            # Other frames: full path
+            lines.append(f"    {filename}:{lineno} in {func}()")
 
     return "\n".join(lines)
