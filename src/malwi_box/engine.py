@@ -1238,9 +1238,21 @@ class BoxEngine:
             self._save_shell_command(config, details.get("command"))
 
     def _save_shell_command(self, config: dict, cmd: str | None) -> None:
-        """Save a shell command to config if not already present."""
-        if cmd and cmd not in config.get("allow_shell_commands", []):
-            config.setdefault("allow_shell_commands", []).append(cmd)
+        """Save a shell command to config if not already present.
+
+        Commands are saved exactly as executed. Users can manually edit
+        the config to use glob patterns (e.g., 'git clone *') for broader matching.
+        """
+        if not cmd:
+            return
+
+        existing = config.get("allow_shell_commands", [])
+        # Check if any existing pattern already matches this command
+        for existing_pattern in existing:
+            if fnmatch.fnmatch(cmd, existing_pattern):
+                return  # Already covered by existing pattern
+
+        config.setdefault("allow_shell_commands", []).append(cmd)
 
     def _save_network_decision(self, config: dict, decision: dict) -> None:
         """Save a network-related decision to config."""

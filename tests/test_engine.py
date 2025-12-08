@@ -222,6 +222,44 @@ class TestShellCommands:
         assert not engine.check_permission("os.system", ("rm -rf /",))
 
 
+class TestCommandPatternMatching:
+    """Tests for shell command glob pattern matching."""
+
+    def test_manual_glob_pattern_matches_similar_command(self, tmp_path):
+        """Test that manually added glob patterns match similar commands."""
+        # User manually edits config to add glob pattern
+        config = {"allow_executables": ["*"], "allow_shell_commands": ["git clone *"]}
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Different git clone commands should all match the pattern
+        assert engine.check_permission(
+            "subprocess.Popen", ("git", ["clone", "https://github.com/user/repo1"], None, None)
+        )
+        assert engine.check_permission(
+            "subprocess.Popen", ("git", ["clone", "https://github.com/user/repo2"], None, None)
+        )
+        assert engine.check_permission(
+            "subprocess.Popen", ("git", ["clone", "--depth=1", "https://example.com/repo"], None, None)
+        )
+
+    def test_saved_command_skipped_if_pattern_covers(self, tmp_path):
+        """Test that saving a command is skipped if existing pattern already covers it."""
+        config = {"allow_shell_commands": ["git clone *"]}
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Try to save a specific command that's already covered by pattern
+        engine._save_shell_command(config, "git clone https://github.com/user/repo2")
+
+        # Should not add the specific command since pattern covers it
+        assert config["allow_shell_commands"] == ["git clone *"]
+
+
 class TestExecutableControl:
     """Tests for executable control (allow_executables)."""
 
@@ -664,7 +702,7 @@ class TestDecisionRecording:
         assert any("$PWD/existing.txt" in str(e) for e in allow_modify)
 
     def test_record_and_save_command_decision(self, tmp_path):
-        """Test that command decisions are saved with hash."""
+        """Test that command decisions are saved exactly with hash."""
         config_path = tmp_path / ".malwi-box.toml"
         engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
 
@@ -678,6 +716,7 @@ class TestDecisionRecording:
         engine.save_decisions()
 
         saved_config = toml.loads(config_path.read_text())
+        # Command is saved exactly (user can manually edit to use glob patterns)
         assert "git status" in saved_config.get("allow_shell_commands", [])
         # Executable should be saved with hash
         executables = saved_config.get("allow_executables", [])
