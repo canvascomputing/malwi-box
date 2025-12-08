@@ -8,15 +8,15 @@ import tempfile
 
 from malwi_box import __version__
 
-# Templates import the hook modules which auto-setup on import
+# Templates import the hook module which auto-setup on import
 RUN_SITECUSTOMIZE_TEMPLATE = (
-    "from malwi_box.hooks.run_hook import setup_hook; setup_hook()"
+    "from malwi_box.hook import setup_run_hook; setup_run_hook()"
 )
 REVIEW_SITECUSTOMIZE_TEMPLATE = (
-    "from malwi_box.hooks.review_hook import setup_hook; setup_hook()"
+    "from malwi_box.hook import setup_review_hook; setup_review_hook()"
 )
 FORCE_SITECUSTOMIZE_TEMPLATE = (
-    "from malwi_box.hooks.force_hook import setup_hook; setup_hook()"
+    "from malwi_box.hook import setup_force_hook; setup_force_hook()"
 )
 
 
@@ -137,14 +137,14 @@ def install_command(args: argparse.Namespace) -> int:
     from pip._internal.cli.main import main as pip_main
 
     from malwi_box.engine import BoxEngine
-    from malwi_box.hooks import review_hook, run_hook
+    from malwi_box.hook import setup_review_hook, setup_run_hook
 
     engine = BoxEngine()
 
     if args.review:
-        review_hook.setup_hook(engine)
+        setup_review_hook(engine)
     else:
-        run_hook.setup_hook(engine)
+        setup_run_hook(engine)
 
     return pip_main(pip_args)
 
