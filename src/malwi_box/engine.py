@@ -487,6 +487,21 @@ class BoxEngine:
             var_name = var_name.decode("utf-8", errors="replace")
         return not self._is_sensitive_env_var(var_name)
 
+    def is_safe_env_read(self, event: str, args: tuple) -> bool:
+        """Check if this is a safe env var read that should be silently allowed.
+
+        Returns True if this is an env read event for a var in $SAFE_ENV_VARS.
+        These should not be logged at all.
+        """
+        if event not in ("os.getenv", "os.environ.get"):
+            return False
+        if not args:
+            return False
+        var_name = args[0]
+        if isinstance(var_name, bytes):
+            var_name = var_name.decode("utf-8", errors="replace")
+        return var_name in LIST_VARIABLES.get("$SAFE_ENV_VARS", [])
+
     def _resolve_path(self, path: str | Path) -> Path:
         """Resolve a path to an absolute path, expanding variables."""
         if isinstance(path, str):

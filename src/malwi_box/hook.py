@@ -149,7 +149,11 @@ def _create_hook_callback(
                 _log_info_event(event, args)
                 return
 
-            # Non-sensitive env var reads are info-only
+            # Safe env var reads are silently allowed (no logging)
+            if engine.is_safe_env_read(event, args):
+                return
+
+            # Non-sensitive env var reads are info-only (logged but not blocked)
             if engine.is_info_only_env_read(event, args):
                 _log_info_event(event, args)
                 return
@@ -348,6 +352,10 @@ def setup_review_hook(engine: BoxEngine | None = None) -> None:
                 print(msg, file=sys.stderr)
             finally:
                 in_hook = False
+            return
+
+        # Safe env var reads are silently allowed (no logging)
+        if engine.is_safe_env_read(event, args):
             return
 
         # Non-sensitive env var reads are info-only
