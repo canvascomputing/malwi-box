@@ -1,6 +1,6 @@
 [project]
 name = "malwi-box"
-version = "0.0.6"
+version = "0.0.7"
 description = "Intercept, audit, and block critical Python operations at runtime"
 readme = "README.md"
 requires-python = ">=3.10"
