@@ -24,10 +24,18 @@ def _truncate(s: str, max_len: int) -> str:
 def _build_command(exe, cmd_args) -> str:
     """Build command string from executable and args.
 
-    cmd_args is typically argv which includes the program name as first element.
+    Handles both cases:
+    - cmd_args includes program name (argv convention): ["git", "version"]
+    - cmd_args is just arguments: ["version"]
     """
     if cmd_args:
-        return " ".join(str(a) for a in cmd_args)
+        first_arg = str(cmd_args[0])
+        exe_str = str(exe)
+        # Check if first arg already contains the executable (argv[0] convention)
+        if first_arg == exe_str or os.path.basename(first_arg) == os.path.basename(exe_str):
+            return " ".join(str(a) for a in cmd_args)
+        # Args don't include exe, prepend it
+        return " ".join([exe_str] + [str(a) for a in cmd_args])
     return str(exe)
 
 

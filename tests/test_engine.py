@@ -259,6 +259,40 @@ class TestCommandPatternMatching:
         # Should not add the specific command since pattern covers it
         assert config["allow_shell_commands"] == ["git clone *"]
 
+    def test_exact_command_in_config_matches(self, tmp_path):
+        """Test that exact command in allow_shell_commands matches the same command.
+
+        Regression test: commands were saved without exe but checked with exe.
+        e.g., "version" was saved but "git version" was checked.
+        """
+        # Simulate what happens when user approves "git version"
+        config = {"allow_executables": ["*"], "allow_shell_commands": ["git version"]}
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # subprocess.Popen("git", ["version"]) should match "git version"
+        assert engine.check_permission(
+            "subprocess.Popen", ("git", ["version"], None, None)
+        )
+
+    def test_command_with_full_path_matches(self, tmp_path):
+        """Test that command with full path in config matches."""
+        config = {
+            "allow_executables": ["*"],
+            "allow_shell_commands": ["/usr/bin/git version"],
+        }
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Full path command should match
+        assert engine.check_permission(
+            "subprocess.Popen", ("/usr/bin/git", ["version"], None, None)
+        )
+
 
 class TestExecutableControl:
     """Tests for executable control (allow_executables)."""
