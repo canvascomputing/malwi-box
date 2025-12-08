@@ -501,6 +501,43 @@ class TestExecutableControl:
             "subprocess.Popen", ("/bin/rm", ["-rf"], None, None)
         )
 
+    def test_short_executable_name_resolved_via_path(self, tmp_path):
+        """Test that short executable names in config are resolved via PATH.
+
+        Regression test: Executables saved as short names (e.g., "git") were not
+        matching when checked because _resolve_path treated them as relative paths
+        instead of using PATH lookup via _resolve_executable.
+        """
+        import shutil
+
+        # Find an actual executable on the system
+        git_path = shutil.which("git")
+        if git_path is None:
+            import pytest
+
+            pytest.skip("git not found on system")
+
+        # Compute the hash of the actual git binary
+        import hashlib
+
+        with open(git_path, "rb") as f:
+            git_hash = f"sha256:{hashlib.sha256(f.read()).hexdigest()}"
+
+        # Config with short name "git" and its hash
+        config = {
+            "allow_executables": [{"path": "git", "hash": git_hash}],
+            "allow_shell_commands": ["git version"],
+        }
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Should match: short name "git" resolves to full path via PATH lookup
+        assert engine.check_permission(
+            "subprocess.Popen", ("git", ["git", "version"], None, None)
+        )
+
     def test_allow_executable_with_variable(self, tmp_path):
         """Test allowing executables with path variables."""
         # Create a fake executable in workdir

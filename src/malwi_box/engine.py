@@ -561,6 +561,13 @@ class BoxEngine:
 
             resolved_entry = self._resolve_path(entry_path)
 
+            # For executable checks, also try resolving via PATH lookup
+            # This handles entries like "git" matching "/usr/bin/git"
+            if check_hash and not os.path.isabs(entry_path):
+                exe_resolved = self._resolve_executable(entry_path)
+                if exe_resolved is not None:
+                    resolved_entry = exe_resolved
+
             if path == resolved_entry:
                 if check_hash and entry_hash:
                     return self._verify_file_hash(path, entry_hash)
