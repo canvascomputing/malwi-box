@@ -53,6 +53,10 @@ def format_event(event: str, args: tuple) -> str:
     if event == "os.unsetenv":
         return f"Unset env var: {_decode(args[0])}"
 
+    if event in ("os.remove", "os.unlink"):
+        path = _decode(args[0])
+        return f"Delete file: {path}"
+
     if event in ("os.getenv", "os.environ.get"):
         key = _decode(args[0])
         return f"Read env var: {key}"

@@ -284,3 +284,106 @@ class TestAiohttpHook:
         # Note: Due to mocking _request, the hook may not fire
         # This test mainly verifies no crashes occur
         # Real integration test would need actual network or better mocking
+
+
+class TestHttpRequestUrlFormat:
+    """Tests verifying that http.request events include full URLs with domains."""
+
+    def test_http_client_includes_full_url(self):
+        """Test http.client includes scheme://host/path in URL."""
+        events = []
+
+        def hook(event, args):
+            if event == "http.request":
+                events.append(args)
+
+        install_hook(hook)
+        try:
+            with (
+                patch.object(http.client.HTTPConnection, "connect"),
+                patch.object(http.client.HTTPConnection, "_send_output"),
+                patch.object(http.client.HTTPConnection, "getresponse"),
+            ):
+                conn = http.client.HTTPConnection("test-domain.com", 80)
+                conn.request("GET", "/api/endpoint")
+        finally:
+            uninstall_hook()
+
+        assert len(events) >= 1
+        url = str(events[0][0])
+        # Should be full URL, not just path
+        assert url.startswith("http://"), f"URL should start with http://, got: {url}"
+        assert "test-domain.com" in url, f"URL should contain host, got: {url}"
+        assert "/api/endpoint" in url, f"URL should contain path, got: {url}"
+
+    def test_https_client_includes_https_scheme(self):
+        """Test https connections use https:// scheme."""
+        events = []
+
+        def hook(event, args):
+            if event == "http.request":
+                events.append(args)
+
+        install_hook(hook)
+        try:
+            with (
+                patch.object(http.client.HTTPSConnection, "connect"),
+                patch.object(http.client.HTTPSConnection, "_send_output"),
+                patch.object(http.client.HTTPSConnection, "getresponse"),
+            ):
+                conn = http.client.HTTPSConnection("secure-test.com", 443)
+                conn.request("POST", "/secure/path")
+        finally:
+            uninstall_hook()
+
+        assert len(events) >= 1
+        url = str(events[0][0])
+        assert url.startswith("https://"), f"URL should start with https://, got: {url}"
+        assert "secure-test.com" in url
+
+    def test_urllib_request_includes_full_url(self):
+        """Test urllib.request includes full URL."""
+        events = []
+
+        def hook(event, args):
+            if event == "http.request":
+                events.append(args)
+
+        install_hook(hook)
+        try:
+            with patch("urllib.request.OpenerDirector.open") as mock_open:
+                mock_response = MagicMock()
+                mock_response.status = 200
+                mock_open.return_value = mock_response
+                urllib.request.urlopen("https://full-url-test.com/path/to/resource")
+        finally:
+            uninstall_hook()
+
+        assert len(events) >= 1
+        url = str(events[0][0])
+        assert "full-url-test.com" in url, f"URL should contain domain, got: {url}"
+        assert "/path/to/resource" in url or "full-url-test.com" in url
+
+    def test_http_request_captures_method(self):
+        """Test that HTTP method is captured correctly."""
+        events = []
+
+        def hook(event, args):
+            if event == "http.request":
+                events.append(args)
+
+        install_hook(hook)
+        try:
+            with (
+                patch.object(http.client.HTTPConnection, "connect"),
+                patch.object(http.client.HTTPConnection, "_send_output"),
+                patch.object(http.client.HTTPConnection, "getresponse"),
+            ):
+                conn = http.client.HTTPConnection("method-test.com", 80)
+                conn.request("DELETE", "/resource/123")
+        finally:
+            uninstall_hook()
+
+        assert len(events) >= 1
+        method = str(events[0][1])
+        assert method == "DELETE", f"Method should be DELETE, got: {method}"

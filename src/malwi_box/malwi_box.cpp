@@ -560,6 +560,59 @@ static void extract_and_report_http_request(PyFrameObject *frame) {
     }
 
     if (url_str != NULL) {
+        const char *url_cstr = PyUnicode_AsUTF8(url_str);
+        PyObject *final_url = NULL;
+
+        // If URL is path-only (starts with /), try to build full URL from self
+        if (url_cstr != NULL && url_cstr[0] == '/' && url_cstr[1] != '/') {
+            PyObject *self_obj = get_local_item(locals, "self");
+            if (self_obj != NULL) {
+                // Try common attribute names for host
+                PyObject *host = PyObject_GetAttrString(self_obj, "host");
+                if (host == NULL) {
+                    PyErr_Clear();
+                    host = PyObject_GetAttrString(self_obj, "_host");
+                }
+                if (host != NULL && PyUnicode_Check(host)) {
+                    const char *host_str = PyUnicode_AsUTF8(host);
+                    if (host_str != NULL && host_str[0] != '\0') {
+                        // Determine scheme
+                        const char *scheme = "https";
+                        PyObject *port = PyObject_GetAttrString(self_obj, "port");
+                        if (port == NULL) {
+                            PyErr_Clear();
+                            port = PyObject_GetAttrString(self_obj, "_port");
+                        }
+                        long port_num = 0;
+                        if (port != NULL && PyLong_Check(port)) {
+                            port_num = PyLong_AsLong(port);
+                            if (port_num == 80) scheme = "http";
+                        }
+                        Py_XDECREF(port);
+
+                        // Build full URL
+                        char url_buf[2048];
+                        if (port_num > 0 && port_num != 80 && port_num != 443) {
+                            snprintf(url_buf, sizeof(url_buf), "%s://%s:%ld%s",
+                                     scheme, host_str, port_num, url_cstr);
+                        } else {
+                            snprintf(url_buf, sizeof(url_buf), "%s://%s%s",
+                                     scheme, host_str, url_cstr);
+                        }
+                        final_url = PyUnicode_FromString(url_buf);
+                    }
+                }
+                Py_XDECREF(host);
+                Py_DECREF(self_obj);
+            }
+        }
+
+        // Use original URL if we couldn't build a full one
+        if (final_url == NULL) {
+            final_url = url_str;
+            Py_INCREF(final_url);
+        }
+
         PyObject *method_str = NULL;
         if (method == NULL) {
             method_str = PyUnicode_FromString("GET");
@@ -571,7 +624,7 @@ static void extract_and_report_http_request(PyFrameObject *frame) {
         }
 
         if (method_str != NULL) {
-            PyObject *args = PyTuple_Pack(2, url_str, method_str);
+            PyObject *args = PyTuple_Pack(2, final_url, method_str);
             if (args != NULL) {
                 invoke_audit_callback("http.request", args);
                 Py_DECREF(args);
@@ -579,6 +632,7 @@ static void extract_and_report_http_request(PyFrameObject *frame) {
             Py_DECREF(method_str);
         }
 
+        Py_DECREF(final_url);
         Py_DECREF(url_str);
     }
 
