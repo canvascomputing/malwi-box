@@ -990,6 +990,31 @@ class TestDecisionRecording:
         saved_config = toml.loads(config_path.read_text())
         assert "example.com" in saved_config.get("allow_domains", [])
 
+    def test_record_and_save_delete_decision(self, tmp_path):
+        """Test that delete decisions are recorded and saved."""
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps({}))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Create a file to simulate deletion
+        test_file = tmp_path / "to_delete.txt"
+        test_file.write_text("delete me")
+
+        # Record delete decision
+        engine.record_decision(
+            "os.remove",
+            (str(test_file),),
+            allowed=True,
+            details={"path": str(test_file)},
+        )
+        engine.save_decisions()
+
+        # Reload and verify
+        saved_config = toml.loads(config_path.read_text())
+        assert "allow_delete" in saved_config
+        assert "$PWD/to_delete.txt" in saved_config["allow_delete"]
+
 
 class TestUnhandledEvents:
     """Tests for events not explicitly handled."""

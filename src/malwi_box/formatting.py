@@ -299,6 +299,10 @@ def extract_decision_details(event: str, args: tuple) -> dict:
             is_raw = args[1] == socket.SOCK_RAW
             details["socket_type"] = "SOCK_RAW" if is_raw else str(args[1])
 
+    elif event in ("os.remove", "os.unlink"):
+        # args: (path,)
+        details["path"] = str(args[0]) if args else ""
+
     return details
 
 

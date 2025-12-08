@@ -1308,6 +1308,20 @@ class BoxEngine:
                 if method_upper not in config.get("allow_http_methods", []):
                     config.setdefault("allow_http_methods", []).append(method_upper)
 
+    def _save_delete_decision(self, config: dict, decision: dict) -> None:
+        """Save a file delete decision to config."""
+        path = decision.get("details", {}).get("path")
+        if not path:
+            return
+
+        key = "allow_delete"
+        if key not in config:
+            config[key] = []
+
+        var_path = self._path_to_variable(path)
+        if var_path not in config[key]:
+            config[key].append(var_path)
+
     def save_decisions(self) -> None:
         """Merge recorded decisions into config file."""
         if not self._decisions:
@@ -1335,6 +1349,8 @@ class BoxEngine:
                 "http.request",
             ):
                 self._save_network_decision(config, decision)
+            elif event in ("os.remove", "os.unlink"):
+                self._save_delete_decision(config, decision)
 
         self._write_config(config)
 
