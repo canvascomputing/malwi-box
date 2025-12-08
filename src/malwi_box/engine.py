@@ -17,6 +17,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from malwi_box import toml
+from malwi_box.formatting import _build_command
 
 # List variable expansion for config values
 # Similar to path variables but expand to multiple values
@@ -765,10 +766,9 @@ class BoxEngine:
         if event == "subprocess.Popen":
             executable = args[0] if args else ""
             cmd_args = args[1] if len(args) > 1 else []
-            if executable and cmd_args:
-                command = " ".join([str(executable)] + [str(a) for a in cmd_args])
-            elif executable:
-                command = str(executable)
+            if executable:
+                # Use _build_command to handle argv[0] convention consistently
+                command = _build_command(executable, cmd_args)
             else:
                 return True
         elif event == "os.system":

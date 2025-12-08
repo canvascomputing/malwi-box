@@ -2,6 +2,7 @@
 
 from malwi_box import toml
 from malwi_box.engine import BoxEngine
+from malwi_box.formatting import _build_command
 
 
 class TestConfigLoading:
@@ -295,6 +296,159 @@ class TestCommandPatternMatching:
         assert engine.check_permission(
             "subprocess.Popen", ("/usr/bin/git", ["version"], None, None)
         )
+
+    def test_command_with_argv0_convention_matches(self, tmp_path):
+        """Test command matches when args include program name (argv[0] convention).
+
+        When subprocess.Popen is called with a list like ['git', 'rev-parse', 'HEAD'],
+        the args tuple includes the program name as the first element.
+        """
+        config = {
+            "allow_executables": ["*"],
+            "allow_shell_commands": ["git rev-parse HEAD"],
+        }
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Args include program name (argv[0] convention)
+        assert engine.check_permission(
+            "subprocess.Popen",
+            ("git", ["git", "rev-parse", "HEAD"], None, None),
+        )
+
+    def test_full_path_exe_with_short_argv0_matches(self, tmp_path):
+        """Test full path exe matches when argv[0] is short name.
+
+        Common case: exe is resolved to full path but argv[0] is short name.
+        """
+        config = {
+            "allow_executables": ["*"],
+            "allow_shell_commands": ["git status"],
+        }
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Full path exe with short name in argv[0]
+        assert engine.check_permission(
+            "subprocess.Popen",
+            ("/usr/bin/git", ["git", "status"], None, None),
+        )
+
+    def test_command_without_args_matches(self, tmp_path):
+        """Test command with no arguments matches."""
+        config = {
+            "allow_executables": ["*"],
+            "allow_shell_commands": ["python"],
+        }
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Command with empty args
+        assert engine.check_permission(
+            "subprocess.Popen", ("python", [], None, None)
+        )
+
+    def test_wildcard_pattern_with_complex_args(self, tmp_path):
+        """Test wildcard patterns match commands with complex arguments."""
+        config = {
+            "allow_executables": ["*"],
+            "allow_shell_commands": ["git clone *"],
+        }
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text(toml.dumps(config))
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Complex git clone command with multiple flags
+        assert engine.check_permission(
+            "subprocess.Popen",
+            (
+                "git",
+                ["git", "clone", "--filter=blob:none", "--quiet", "https://x.com/r"],
+                None,
+                None,
+            ),
+        )
+
+    def test_raw_toml_config_file(self, tmp_path):
+        """Test loading commands from a raw TOML file (as user would edit).
+
+        This tests the actual file format, not just programmatic config.
+        """
+        config_path = tmp_path / ".malwi-box.toml"
+        # Raw TOML as a user would write it
+        config_path.write_text('''
+allow_executables = ["*"]
+allow_shell_commands = [
+    "git rev-parse HEAD",
+    "git status",
+    "git clone *",
+]
+''')
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Exact match
+        assert engine.check_permission(
+            "subprocess.Popen",
+            ("git", ["git", "rev-parse", "HEAD"], None, None),
+        )
+        # Another exact match
+        assert engine.check_permission(
+            "subprocess.Popen",
+            ("git", ["git", "status"], None, None),
+        )
+        # Glob pattern match
+        assert engine.check_permission(
+            "subprocess.Popen",
+            ("git", ["git", "clone", "https://github.com/user/repo"], None, None),
+        )
+        # Should NOT match
+        assert not engine.check_permission(
+            "subprocess.Popen",
+            ("git", ["git", "push"], None, None),
+        )
+
+
+class TestBuildCommand:
+    """Tests for _build_command function."""
+
+    def test_short_exe_with_argv0(self):
+        """Test short exe when args include program name."""
+        assert _build_command("git", ["git", "status"]) == "git status"
+
+    def test_short_exe_without_argv0(self):
+        """Test short exe when args don't include program name."""
+        assert _build_command("git", ["status"]) == "git status"
+
+    def test_full_path_exe_with_short_argv0(self):
+        """Test full path exe with short program name in args."""
+        assert _build_command("/usr/bin/git", ["git", "status"]) == "git status"
+
+    def test_full_path_exe_with_full_path_argv0(self):
+        """Test full path exe with full path in args."""
+        result = _build_command("/usr/bin/git", ["/usr/bin/git", "status"])
+        assert result == "/usr/bin/git status"
+
+    def test_exe_only_no_args(self):
+        """Test command with no arguments."""
+        assert _build_command("python", []) == "python"
+
+    def test_multi_word_args(self):
+        """Test command with multiple arguments."""
+        result = _build_command("git", ["git", "clone", "--depth=1", "https://x.com"])
+        assert result == "git clone --depth=1 https://x.com"
+
+    def test_args_with_different_basename(self):
+        """Test when first arg is not the executable."""
+        result = _build_command("python", ["-m", "pip", "install"])
+        assert result == "python -m pip install"
 
 
 class TestExecutableControl:
