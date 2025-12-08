@@ -131,6 +131,71 @@ def format_event(event: str, args: tuple) -> str:
         operation = args[0] if args else "unknown"
         return f"Fernet: {operation}"
 
+    # Deserialization events
+    if event == "pickle.find_class":
+        module = args[0] if args else "?"
+        cls = args[1] if len(args) > 1 else "?"
+        return f"Pickle: {module}.{cls}"
+
+    if event == "marshal.loads":
+        return "Marshal: loads"
+
+    # Archive events
+    if event == "shutil.unpack_archive":
+        filename = args[0] if args else "?"
+        extract_dir = args[1] if len(args) > 1 else "?"
+        fmt = args[2] if len(args) > 2 else "auto"
+        return f"Unpack: {filename} -> {extract_dir} ({fmt})"
+
+    # Crypto algorithm events
+    if event == "crypto.hmac":
+        algo = args[0] if args else "?"
+        return f"HMAC: {algo}"
+
+    if event == "crypto.kdf":
+        algo = args[0] if args else "?"
+        return f"KDF: {algo}"
+
+    if event == "crypto.rsa":
+        key_size = args[0] if args else "?"
+        op = args[1] if len(args) > 1 else "?"
+        return f"RSA: {op} ({key_size} bits)"
+
+    if event == "crypto.aes":
+        mode = args[0] if args else "?"
+        op = args[1] if len(args) > 1 else "?"
+        return f"AES: {op} ({mode})"
+
+    if event == "crypto.chacha20":
+        op = args[0] if args else "?"
+        return f"ChaCha20: {op}"
+
+    # Random events
+    if event == "secrets.token":
+        size = args[0] if args else "?"
+        return f"SecureRandom: {size} bytes"
+
+    # Encoding & compression events
+    if event == "encoding.hex":
+        op = args[0] if args else "?"
+        return f"Hex: {op}"
+
+    if event == "encoding.zlib":
+        op = args[0] if args else "?"
+        return f"Zlib: {op}"
+
+    if event == "encoding.gzip":
+        op = args[0] if args else "?"
+        return f"Gzip: {op}"
+
+    if event == "encoding.bz2":
+        op = args[0] if args else "?"
+        return f"Bz2: {op}"
+
+    if event == "encoding.lzma":
+        op = args[0] if args else "?"
+        return f"LZMA: {op}"
+
     if event == "socket.__new__":
         # Raw socket creation - args: (family, type, proto)
         import socket

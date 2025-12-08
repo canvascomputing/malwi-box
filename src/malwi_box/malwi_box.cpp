@@ -715,7 +715,7 @@ static void check_http_function_call(PyFrameObject *frame) {
     release_frame_func_info(&info);
 }
 
-// Check if current frame is an encoding function call (base64, binascii)
+// Check if current frame is an encoding function call (base64, binascii, compression)
 static void check_encoding_function_call(PyFrameObject *frame) {
     FrameFuncInfo info;
     if (!get_frame_func_info(frame, &info)) return;
@@ -728,10 +728,55 @@ static void check_encoding_function_call(PyFrameObject *frame) {
         }
     }
 
+    // hex encoding - binascii module
+    if (strstr(info.filename, "binascii") != NULL) {
+        if (streq(info.func_name, "hexlify") || streq(info.func_name, "b2a_hex")) {
+            fire_simple_event("encoding.hex", "hexlify");
+        } else if (streq(info.func_name, "unhexlify") || streq(info.func_name, "a2b_hex")) {
+            fire_simple_event("encoding.hex", "unhexlify");
+        }
+    }
+
+    // gzip compression - gzip.py module
+    if (strstr(info.filename, "gzip.py") != NULL) {
+        if (streq(info.func_name, "compress")) {
+            fire_simple_event("encoding.gzip", "compress");
+        } else if (streq(info.func_name, "decompress")) {
+            fire_simple_event("encoding.gzip", "decompress");
+        }
+    }
+
+    // zlib compression - C module, check for zlib in filename
+    if (strstr(info.filename, "zlib") != NULL) {
+        if (streq(info.func_name, "compress") || streq(info.func_name, "compressobj")) {
+            fire_simple_event("encoding.zlib", "compress");
+        } else if (streq(info.func_name, "decompress") || streq(info.func_name, "decompressobj")) {
+            fire_simple_event("encoding.zlib", "decompress");
+        }
+    }
+
+    // bz2 compression - check for bz2 in filename
+    if (strstr(info.filename, "bz2") != NULL) {
+        if (streq(info.func_name, "compress")) {
+            fire_simple_event("encoding.bz2", "compress");
+        } else if (streq(info.func_name, "decompress")) {
+            fire_simple_event("encoding.bz2", "decompress");
+        }
+    }
+
+    // lzma compression - check for lzma in filename
+    if (strstr(info.filename, "lzma") != NULL) {
+        if (streq(info.func_name, "compress")) {
+            fire_simple_event("encoding.lzma", "compress");
+        } else if (streq(info.func_name, "decompress")) {
+            fire_simple_event("encoding.lzma", "decompress");
+        }
+    }
+
     release_frame_func_info(&info);
 }
 
-// Check if current frame is a crypto function call (cryptography library)
+// Check if current frame is a crypto function call (cryptography library, hmac, secrets)
 static void check_crypto_function_call(PyFrameObject *frame) {
     FrameFuncInfo info;
     if (!get_frame_func_info(frame, &info)) return;
@@ -749,6 +794,44 @@ static void check_crypto_function_call(PyFrameObject *frame) {
         if (streq(info.func_name, "encrypt") || streq(info.func_name, "decrypt") ||
             streq(info.func_name, "encrypt_at_time") || streq(info.func_name, "decrypt_at_time")) {
             fire_simple_event("crypto.fernet", info.func_name);
+        }
+    }
+
+    // hmac module
+    if (strstr(info.filename, "hmac.py") != NULL) {
+        if (streq(info.func_name, "new") || streq(info.func_name, "digest")) {
+            fire_simple_event("crypto.hmac", info.func_name);
+        }
+    }
+
+    // secrets module - secure random token generation
+    if (strstr(info.filename, "secrets.py") != NULL) {
+        if (streq(info.func_name, "token_bytes") ||
+            streq(info.func_name, "token_hex") ||
+            streq(info.func_name, "token_urlsafe")) {
+            fire_simple_event("secrets.token", info.func_name);
+        }
+    }
+
+    // cryptography RSA - check for rsa in path
+    if (strstr(info.filename, "cryptography") != NULL &&
+        strstr(info.filename, "rsa") != NULL) {
+        if (streq(info.func_name, "generate_private_key") ||
+            streq(info.func_name, "_generate_private_key")) {
+            fire_simple_event("crypto.rsa", "generate");
+        }
+    }
+
+    // cryptography AES - check for algorithms/ciphers with AES
+    if (strstr(info.filename, "cryptography") != NULL) {
+        // AES algorithm instantiation
+        if (streq(info.func_name, "AES") || streq(info.func_name, "AES128") ||
+            streq(info.func_name, "AES256")) {
+            fire_simple_event("crypto.aes", "init");
+        }
+        // ChaCha20 algorithm instantiation
+        if (streq(info.func_name, "ChaCha20") || streq(info.func_name, "ChaCha20Poly1305")) {
+            fire_simple_event("crypto.chacha20", "init");
         }
     }
 

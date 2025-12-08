@@ -84,11 +84,31 @@ SHELL_EVENTS = frozenset({"subprocess.Popen", "os.system"})
 # Events that are info-only (never blocked, always logged for security awareness)
 INFO_ONLY_EVENTS = frozenset(
     {
+        # Encoding
         "encoding.base64",
+        "encoding.hex",
+        "encoding.zlib",
+        "encoding.gzip",
+        "encoding.bz2",
+        "encoding.lzma",
+        # Crypto
         "crypto.cipher",
         "crypto.fernet",
+        "crypto.hmac",
+        "crypto.kdf",
+        "crypto.rsa",
+        "crypto.aes",
+        "crypto.chacha20",
+        # Secrets
+        "secrets.token",
+        # Environment
         "os.putenv",
         "os.unsetenv",
+        # Deserialization
+        "pickle.find_class",
+        "marshal.loads",
+        # Archives
+        "shutil.unpack_archive",
     }
 )
 

@@ -255,40 +255,59 @@ allow_executables = [
 ]
 ```
 
-## How It Works
+## Information Events
 
-Uses Python's PEP 578 audit hooks via a C++ extension to intercept:
-- File operations (`open`)
-- Network requests (`socket.connect`, `socket.getaddrinfo`)
-- HTTP requests (`urllib.Request` + profile hooks for `requests`, `httpx`, `urllib3`, `aiohttp`, `http.client`)
-- Process execution (`subprocess.Popen`, `os.exec*`, `os.system`)
-- Library loading (`ctypes.dlopen`)
-- Raw socket creation (`socket.__new__` with `SOCK_RAW`)
+Some operations are logged for auditing but never blocked. They help identify potentially suspicious behavior during program analysis:
 
-**Protections against bypass:**
+### Encoding & Compression
+
+| Event | Description | Example Output | Malware Indicator |
+|-------|-------------|----------------|-------------------|
+| `encoding.base64` | Base64 encode/decode | `Base64: b64encode` | Payload obfuscation |
+| `encoding.hex` | Hex encode/decode | `Hex: hexlify` | Payload obfuscation |
+| `encoding.zlib` | zlib compress/decompress | `Zlib: compress` | Packed payloads |
+| `encoding.gzip` | gzip compress/decompress | `Gzip: compress` | Packed payloads |
+| `encoding.bz2` | bz2 compress/decompress | `Bz2: compress` | Packed payloads |
+| `encoding.lzma` | lzma/xz compress/decompress | `LZMA: compress` | Packed payloads |
+
+### Cryptography
+
+| Event | Description | Example Output | Malware Indicator |
+|-------|-------------|----------------|-------------------|
+| `crypto.cipher` | Low-level cipher ops | `Cipher: Encrypt` | Generic encryption |
+| `crypto.fernet` | Fernet encryption | `Fernet: encrypt` | Symmetric encryption |
+| `crypto.hmac` | HMAC keyed hashing | `HMAC: new` | C2 authentication |
+| `crypto.rsa` | RSA key operations | `RSA: generate (2048 bits)` | Ransomware key exchange |
+| `crypto.aes` | AES encryption | `AES: init (CBC)` | File encryption |
+| `crypto.chacha20` | ChaCha20 encryption | `ChaCha20: init` | Modern symmetric encryption |
+| `secrets.token` | Secure token generation | `SecureRandom: 32 bytes` | Key generation |
+
+### Deserialization
+
+| Event | Description | Example Output | Malware Indicator |
+|-------|-------------|----------------|-------------------|
+| `pickle.find_class` | Class during unpickling | `Pickle: builtins.list` | Code execution |
+| `marshal.loads` | Loading bytecode | `Marshal: loads` | Bytecode injection |
+
+### Archive Extraction
+
+| Event | Description | Example Output | Malware Indicator |
+|-------|-------------|----------------|-------------------|
+| `shutil.unpack_archive` | Archive extraction | `Unpack: file.zip -> /tmp` | Zip bombs, path traversal |
+
+### Environment
+
+| Event | Description | Example Output | Malware Indicator |
+|-------|-------------|----------------|-------------------|
+| `os.putenv` | Set environment variable | `Set env var: PATH=/tmp` | Env manipulation |
+| `os.unsetenv` | Unset environment variable | `Unset env var: DEBUG` | Env manipulation |
+
+
+## Bypass Protection
+
 - Blocks `sys.addaudithook` to prevent registering competing hooks
 - Blocks `sys.settrace` and `sys.setprofile` to prevent debugger-based evasion
 - Blocks `ctypes.dlopen` by default to prevent loading native code that bypasses hooks
-
-Blocked operations terminate immediately with exit code 78.
-
-### Info-Only Events
-
-Some operations are logged for security awareness but never blocked. They help identify potentially suspicious behavior during malware analysis:
-
-| Event | Description | Example Output |
-|-------|-------------|----------------|
-| `encoding.base64` | Base64 encoding/decoding | `Base64: b64encode` |
-| `crypto.cipher` | Cipher encryption/decryption (cryptography library) | `Cipher: Encrypt` |
-| `crypto.fernet` | Fernet encryption/decryption | `Fernet: encrypt` |
-| `os.putenv` | Set environment variable | `Set env var: PATH=/tmp` |
-| `os.unsetenv` | Unset environment variable | `Unset env var: DEBUG` |
-
-These events are always logged regardless of mode (run, force, or review) and cannot be disabled. They help identify:
-- Data exfiltration attempts (base64 encoding)
-- Ransomware behavior (encryption operations)
-- Obfuscation techniques
-- Environment manipulation (env var changes)
 
 ## Limitations
 
