@@ -195,7 +195,7 @@ Variables can be used in config values and are expanded at runtime.
 | `$PYPI_DOMAINS` | `pypi.org`, `files.pythonhosted.org` |
 | `$LOCALHOST` | `127.0.0.1`, `::1`, `localhost` |
 | `$ALL_HTTP_METHODS` | `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD`, `OPTIONS` |
-| `$SAFE_ENV_VARS` | `PATH`, `HOME`, `USER`, `SHELL`, `TERM`, `LANG`, `LC_ALL`, `LC_CTYPE`, `PWD`, `OLDPWD`, `TMPDIR`, `TMP`, `TEMP`, `PYTHONPATH`, `VIRTUAL_ENV`, `CONDA_PREFIX` |
+| `$SAFE_ENV_VARS` | `PATH`, `HOME`, `USER`, `SHELL`, `TERM`, `LANG`, `LC_ALL`, `LC_CTYPE`, `PWD`, `OLDPWD`, `TMPDIR`, `TMP`, `TEMP`, `PYTHONPATH`, `VIRTUAL_ENV`, `CONDA_PREFIX`, `SOURCE_DATE_EPOCH` |
 
 List variables can be combined with patterns: `$PYPI_DOMAINS/*` expands to `pypi.org/*`, `files.pythonhosted.org/*`.
 

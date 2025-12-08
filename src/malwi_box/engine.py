@@ -65,6 +65,8 @@ LIST_VARIABLES: dict[str, list[str]] = {
         "PYTHONPATH",
         "VIRTUAL_ENV",
         "CONDA_PREFIX",
+        # Build reproducibility
+        "SOURCE_DATE_EPOCH",
     ],
 }
 
