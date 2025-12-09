@@ -89,11 +89,30 @@ def set_event_blocklist(blocklist: Iterable[str] | None) -> None:
 # =============================================================================
 
 
+def _get_caller_location() -> str:
+    """Get caller location (basename:lineno) excluding malwi-box internals."""
+    stack = inspect.stack()
+    skip_paths = {"malwi_box", "sitecustomize.py"}
+
+    for frame_info in stack:
+        filename = frame_info.filename
+        if any(skip in filename for skip in skip_paths):
+            continue
+        if "<" in filename:  # e.g., <frozen importlib._bootstrap>
+            continue
+        basename = os.path.basename(filename)
+        return f" ({basename}:{frame_info.lineno})"
+
+    return ""
+
+
 def _log_info_event(event: str, args: tuple) -> None:
-    """Log an info-only event (cyan color)."""
+    """Log an info-only event (cyan color) with caller location."""
     from malwi_box import format_event
 
-    msg = f"{Color.CYAN}[malwi-box] {format_event(event, args)}{Color.RESET}\n"
+    formatted = format_event(event, args)
+    location = _get_caller_location()
+    msg = f"{Color.CYAN}[malwi-box] {formatted}{location}{Color.RESET}\n"
     sys.stderr.write(msg)
     sys.stderr.flush()
 
@@ -347,9 +366,7 @@ def setup_review_hook(engine: BoxEngine | None = None) -> None:
         if event in INFO_ONLY_EVENTS:
             in_hook = True
             try:
-                formatted = format_event(event, args)
-                msg = f"{Color.CYAN}[malwi-box] {formatted}{Color.RESET}"
-                print(msg, file=sys.stderr)
+                _log_info_event(event, args)
             finally:
                 in_hook = False
             return
@@ -362,9 +379,7 @@ def setup_review_hook(engine: BoxEngine | None = None) -> None:
         if engine.is_info_only_env_read(event, args):
             in_hook = True
             try:
-                formatted = format_event(event, args)
-                msg = f"{Color.CYAN}[malwi-box] {formatted}{Color.RESET}"
-                print(msg, file=sys.stderr)
+                _log_info_event(event, args)
             finally:
                 in_hook = False
             return

@@ -259,8 +259,6 @@ allow_executables = [
 
 Some operations are logged for auditing but never blocked. They help identify potentially suspicious behavior during program analysis:
 
-### Encoding & Compression
-
 | Event | Description | Example Output | Malware Indicator |
 |-------|-------------|----------------|-------------------|
 | `encoding.base64` | Base64 encode/decode | `Base64: b64encode` | Payload obfuscation |
@@ -269,11 +267,6 @@ Some operations are logged for auditing but never blocked. They help identify po
 | `encoding.gzip` | gzip compress/decompress | `Gzip: compress` | Packed payloads |
 | `encoding.bz2` | bz2 compress/decompress | `Bz2: compress` | Packed payloads |
 | `encoding.lzma` | lzma/xz compress/decompress | `LZMA: compress` | Packed payloads |
-
-### Cryptography
-
-| Event | Description | Example Output | Malware Indicator |
-|-------|-------------|----------------|-------------------|
 | `crypto.cipher` | Low-level cipher ops | `Cipher: Encrypt` | Generic encryption |
 | `crypto.fernet` | Fernet encryption | `Fernet: encrypt` | Symmetric encryption |
 | `crypto.hmac` | HMAC keyed hashing | `HMAC: new` | C2 authentication |
@@ -281,24 +274,9 @@ Some operations are logged for auditing but never blocked. They help identify po
 | `crypto.aes` | AES encryption | `AES: init (CBC)` | File encryption |
 | `crypto.chacha20` | ChaCha20 encryption | `ChaCha20: init` | Modern symmetric encryption |
 | `secrets.token` | Secure token generation | `SecureRandom: 32 bytes` | Key generation |
-
-### Deserialization
-
-| Event | Description | Example Output | Malware Indicator |
-|-------|-------------|----------------|-------------------|
 | `pickle.find_class` | Class during unpickling | `Pickle: builtins.list` | Code execution |
 | `marshal.loads` | Loading bytecode | `Marshal: loads` | Bytecode injection |
-
-### Archive Extraction
-
-| Event | Description | Example Output | Malware Indicator |
-|-------|-------------|----------------|-------------------|
 | `shutil.unpack_archive` | Archive extraction | `Unpack: file.zip -> /tmp` | Zip bombs, path traversal |
-
-### Environment
-
-| Event | Description | Example Output | Malware Indicator |
-|-------|-------------|----------------|-------------------|
 | `os.putenv` | Set environment variable | `Set env var: PATH=/tmp` | Env manipulation |
 | `os.unsetenv` | Unset environment variable | `Unset env var: DEBUG` | Env manipulation |
 
