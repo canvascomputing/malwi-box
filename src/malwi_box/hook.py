@@ -140,15 +140,21 @@ def _prompt_approval() -> str:
 
     Uses /dev/tty to avoid conflicts with user code that may be
     writing to stdout (e.g., loading animations with \\r).
+    Falls back to input() when stdin is piped (e.g., tests, CI).
     """
     prompt = "Approve? [Y/n/i]: "
+
+    # If stdin is piped, use input() to read from it
+    if not sys.stdin.isatty():
+        return input(prompt).strip().lower()
+
     try:
         with open("/dev/tty", "r") as tty_in, open("/dev/tty", "w") as tty_out:
             tty_out.write(prompt)
             tty_out.flush()
             return tty_in.readline().strip().lower()
     except OSError:
-        # Fallback for environments without /dev/tty (CI, piped input)
+        # Fallback for environments without /dev/tty
         return input(prompt).strip().lower()
 
 

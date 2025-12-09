@@ -33,8 +33,9 @@ class TestPromptApproval:
                 return mock_tty_in
             return mock_tty_out
 
-        with patch("builtins.open", side_effect=open_side_effect):
-            result = _prompt_approval()
+        with patch("sys.stdin.isatty", return_value=True):
+            with patch("builtins.open", side_effect=open_side_effect):
+                result = _prompt_approval()
 
         assert result == "y"
         mock_tty_out.write.assert_called_with("Approve? [Y/n/i]: ")
@@ -49,8 +50,9 @@ class TestPromptApproval:
                 return mock_tty_in
             return mock_tty_out
 
-        with patch("builtins.open", side_effect=open_side_effect):
-            result = _prompt_approval()
+        with patch("sys.stdin.isatty", return_value=True):
+            with patch("builtins.open", side_effect=open_side_effect):
+                result = _prompt_approval()
 
         assert result == "n"
 
@@ -63,8 +65,9 @@ class TestPromptApproval:
                 return mock_tty_in
             return mock_tty_out
 
-        with patch("builtins.open", side_effect=open_side_effect):
-            result = _prompt_approval()
+        with patch("sys.stdin.isatty", return_value=True):
+            with patch("builtins.open", side_effect=open_side_effect):
+                result = _prompt_approval()
 
         assert result == "i"
 
@@ -77,25 +80,28 @@ class TestPromptApproval:
                 return mock_tty_in
             return mock_tty_out
 
-        with patch("builtins.open", side_effect=open_side_effect):
-            result = _prompt_approval()
+        with patch("sys.stdin.isatty", return_value=True):
+            with patch("builtins.open", side_effect=open_side_effect):
+                result = _prompt_approval()
 
         assert result == "y"  # lowercase and stripped
 
     def test_fallback_to_input_on_oserror(self):
         """Test fallback to input() when /dev/tty is not available."""
-        with patch("builtins.open", side_effect=OSError("No TTY")):
-            with patch("builtins.input", return_value="y") as mock_input:
-                result = _prompt_approval()
+        with patch("sys.stdin.isatty", return_value=True):
+            with patch("builtins.open", side_effect=OSError("No TTY")):
+                with patch("builtins.input", return_value="y") as mock_input:
+                    result = _prompt_approval()
 
         assert result == "y"
         mock_input.assert_called_once_with("Approve? [Y/n/i]: ")
 
     def test_fallback_input_strips_and_lowercases(self):
         """Test that fallback input is also stripped and lowercased."""
-        with patch("builtins.open", side_effect=OSError("No TTY")):
-            with patch("builtins.input", return_value="  N  ") as mock_input:
-                result = _prompt_approval()
+        with patch("sys.stdin.isatty", return_value=True):
+            with patch("builtins.open", side_effect=OSError("No TTY")):
+                with patch("builtins.input", return_value="  N  ") as mock_input:
+                    result = _prompt_approval()
 
         assert result == "n"
 
@@ -108,7 +114,17 @@ class TestPromptApproval:
                 return mock_tty_in
             return mock_tty_out
 
-        with patch("builtins.open", side_effect=open_side_effect):
-            result = _prompt_approval()
+        with patch("sys.stdin.isatty", return_value=True):
+            with patch("builtins.open", side_effect=open_side_effect):
+                result = _prompt_approval()
 
         assert result == ""  # Empty string, which is treated as default (yes)
+
+    def test_piped_stdin_uses_input(self):
+        """Test that piped stdin (non-tty) uses input() directly."""
+        with patch("sys.stdin.isatty", return_value=False):
+            with patch("builtins.input", return_value="y") as mock_input:
+                result = _prompt_approval()
+
+        assert result == "y"
+        mock_input.assert_called_once_with("Approve? [Y/n/i]: ")
