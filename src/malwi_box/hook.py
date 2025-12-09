@@ -135,6 +135,23 @@ def _log_blocked(event: str, args: tuple) -> None:
     sys.stderr.flush()
 
 
+def _prompt_approval() -> str:
+    """Prompt for approval using direct terminal I/O.
+
+    Uses /dev/tty to avoid conflicts with user code that may be
+    writing to stdout (e.g., loading animations with \\r).
+    """
+    prompt = "Approve? [Y/n/i]: "
+    try:
+        with open("/dev/tty", "r") as tty_in, open("/dev/tty", "w") as tty_out:
+            tty_out.write(prompt)
+            tty_out.flush()
+            return tty_in.readline().strip().lower()
+    except OSError:
+        # Fallback for environments without /dev/tty (CI, piped input)
+        return input(prompt).strip().lower()
+
+
 # =============================================================================
 # Hook Callback Factory
 # =============================================================================
@@ -401,7 +418,7 @@ def setup_review_hook(engine: BoxEngine | None = None) -> None:
             # Prompt loop with inspect option
             while True:
                 try:
-                    response = input("Approve? [Y/n/i]: ").strip().lower()
+                    response = _prompt_approval()
                 except (EOFError, KeyboardInterrupt):
                     print(f"\n{Color.YELLOW}Aborted{Color.RESET}", file=sys.stderr)
                     sys.stderr.flush()
