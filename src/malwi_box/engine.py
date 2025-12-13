@@ -398,7 +398,6 @@ class BoxEngine:
           $PWD, $HOME, $TMPDIR, $CACHE_HOME
           $PYTHON_STDLIB, $PYTHON_SITE_PACKAGES, $PYTHON_PLATLIB, $PYTHON_USER_SITE
           $PYTHON_PREFIX, $PIP_CACHE, $VENV
-          $ENV{VAR_NAME}
         """
         if "$" not in path:
             return path
@@ -410,13 +409,6 @@ class BoxEngine:
         for var, value in variables.items():
             if var in result and value:  # Only replace if value is non-empty
                 result = result.replace(var, value)
-
-        # Handle $ENV{VAR_NAME} pattern
-        def env_replace(match: re.Match) -> str:
-            var_name = match.group(1)
-            return os.environ.get(var_name, "")
-
-        result = re.sub(r"\$ENV\{([^}]+)\}", env_replace, result)
 
         return result
 

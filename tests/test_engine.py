@@ -1089,21 +1089,6 @@ class TestPathVariableExpansion:
         expected = site.getusersitepackages()
         assert result == expected
 
-    def test_expand_env_var(self, tmp_path, monkeypatch):
-        """Test that $ENV{VAR} expands to environment variable."""
-        monkeypatch.setenv("MY_TEST_VAR", "/custom/path")
-        engine = BoxEngine(config_path=tmp_path / ".malwi-box.toml", workdir=tmp_path)
-
-        result = engine._expand_path_variables("$ENV{MY_TEST_VAR}/subdir")
-        assert result == "/custom/path/subdir"
-
-    def test_expand_env_var_missing(self, tmp_path):
-        """Test that missing $ENV{VAR} expands to empty string."""
-        engine = BoxEngine(config_path=tmp_path / ".malwi-box.toml", workdir=tmp_path)
-
-        result = engine._expand_path_variables("$ENV{NONEXISTENT_VAR_12345}/subdir")
-        assert result == "/subdir"
-
     def test_no_expansion_without_dollar(self, tmp_path):
         """Test that paths without $ are returned unchanged."""
         engine = BoxEngine(config_path=tmp_path / ".malwi-box.toml", workdir=tmp_path)

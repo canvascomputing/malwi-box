@@ -207,7 +207,6 @@ Variables can be used in config values and are expanded at runtime.
 | `$PYTHON_PLATLIB` | Platform-specific packages |
 | `$PYTHON_USER_SITE` | User site-packages (`~/.local/lib/pythonX.Y/site-packages`) |
 | `$PYTHON_PREFIX` | Python installation prefix |
-| `$ENV{VAR}` | Any environment variable |
 | **List variables** | *Expand to multiple values* |
 | `$PYPI_DOMAINS` | `pypi.org`, `files.pythonhosted.org` |
 | `$LOCALHOST` | `127.0.0.1`, `::1`, `localhost` |
