@@ -41,8 +41,10 @@ def _build_command(exe, cmd_args) -> str:
     return str(exe)
 
 
-def format_event(event: str, args: tuple) -> str:
+def format_event(event: str, args: tuple, truncate: bool = False) -> str:
     """Format audit event for human-readable output."""
+    def shorten(s: str, max_len: int) -> str:
+        return _truncate(s, max_len) if truncate else s
     if not args:
         return f"{event}: {args}"
 
@@ -57,7 +59,7 @@ def format_event(event: str, args: tuple) -> str:
 
     if event == "os.putenv":
         key = _decode(args[0])
-        val = _truncate(_decode(args[1]), MAX_VALUE_LEN)
+        val = shorten(_decode(args[1]), MAX_VALUE_LEN)
         return f"Set env var: {key}={val}"
 
     if event == "os.unsetenv":
@@ -94,12 +96,12 @@ def format_event(event: str, args: tuple) -> str:
 
     if event == "subprocess.Popen":
         cmd_args = args[1] if len(args) > 1 else []
-        cmd = _truncate(_build_command(args[0], cmd_args), MAX_CMD_LEN)
-        return f"Execute: {cmd}"
+        cmd = _build_command(args[0], cmd_args)
+        return f"Execute: {shorten(cmd, MAX_CMD_LEN)}"
 
     if event == "os.system":
-        cmd = _truncate(str(args[0]), MAX_CMD_LEN)
-        return f"Shell: {cmd}"
+        cmd = str(args[0])
+        return f"Shell: {shorten(cmd, MAX_CMD_LEN)}"
 
     if event == "os.exec":
         exe = args[0] if args else "?"
@@ -124,12 +126,12 @@ def format_event(event: str, args: tuple) -> str:
             # Infer method from data presence
             data = args[1] if len(args) > 1 else None
             method = "POST" if data else "GET"
-        return f"HTTP {method}: {_truncate(str(url), MAX_CMD_LEN)}"
+        return f"HTTP {method}: {shorten(str(url), MAX_CMD_LEN)}"
 
     if event == "http.request":
         url = args[0] if args else "?"
         method = args[1] if len(args) > 1 else "GET"
-        return f"HTTP {method}: {_truncate(str(url), MAX_CMD_LEN)}"
+        return f"HTTP {method}: {shorten(str(url), MAX_CMD_LEN)}"
 
     # Info-only events (encoding/crypto)
     if event == "encoding.base64":

@@ -227,11 +227,11 @@ class TestFormatEvent:
         assert result == "Set env var: MY_VAR=my_value"
 
     def test_format_putenv_truncates_long_values(self):
-        """Test that long env var values are truncated."""
+        """Test that long env var values are truncated when truncate=True."""
         from malwi_box.formatting import format_event as _format_event
 
         long_value = "x" * 100
-        result = _format_event("os.putenv", (b"KEY", long_value.encode()))
+        result = _format_event("os.putenv", (b"KEY", long_value.encode()), truncate=True)
         assert "..." in result
         assert len(result) < 80
 
@@ -266,11 +266,11 @@ class TestFormatEvent:
         assert result == "Execute: /bin/ls -la /tmp"
 
     def test_format_subprocess_truncates_long_commands(self):
-        """Test that long commands are truncated."""
+        """Test that long commands are truncated when truncate=True."""
         from malwi_box.formatting import format_event as _format_event
 
         long_args = ["arg"] * 50
-        result = _format_event("subprocess.Popen", ("/bin/cmd", long_args, None, None))
+        result = _format_event("subprocess.Popen", ("/bin/cmd", long_args, None, None), truncate=True)
         assert "..." in result
         assert len(result) <= 95  # "Execute: " prefix + truncated command
 
