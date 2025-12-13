@@ -19,6 +19,7 @@ from malwi_box._audit_hook import (
     clear_callback,
     set_blocklist,
     set_callback,
+    set_log_info_events,
 )
 
 if TYPE_CHECKING:
@@ -82,6 +83,39 @@ def set_event_blocklist(blocklist: Iterable[str] | None) -> None:
         set_blocklist(None)
     else:
         set_blocklist(list(blocklist))
+
+
+def _build_blocklist(
+    engine: "BoxEngine", extra: Iterable[str] | None = None
+) -> list[str]:
+    """Build blocklist including info-only events if disabled in config.
+
+    Args:
+        engine: BoxEngine instance with config
+        extra: Additional events to block (e.g., review mode blocklist)
+
+    Returns:
+        List of event names to block at the C++ level
+    """
+    from malwi_box.engine import INFO_ONLY_EVENTS
+
+    blocklist = list(extra) if extra else []
+
+    # If info events are disabled, add them to blocklist to skip C++ -> Python callback
+    if not engine.config.get("log_info_events", True):
+        blocklist.extend(INFO_ONLY_EVENTS)
+
+    return blocklist
+
+
+def _configure_info_events(engine: "BoxEngine") -> None:
+    """Configure C++ level info event handling based on config.
+
+    Args:
+        engine: BoxEngine instance with config
+    """
+    log_info = engine.config.get("log_info_events", True)
+    set_log_info_events(log_info)
 
 
 # =============================================================================
@@ -179,6 +213,7 @@ def _create_hook_callback(
     from malwi_box.engine import INFO_ONLY_EVENTS
 
     in_hook = False
+    log_info = engine.config.get("log_info_events", True)
 
     def hook(event: str, args: tuple) -> None:
         nonlocal in_hook
@@ -188,7 +223,8 @@ def _create_hook_callback(
         in_hook = True
         try:
             if event in INFO_ONLY_EVENTS:
-                _log_info_event(event, args)
+                if log_info:
+                    _log_info_event(event, args)
                 return
 
             # Safe env var reads are silently allowed (no logging)
@@ -197,7 +233,8 @@ def _create_hook_callback(
 
             # Non-sensitive env var reads are info-only (logged but not blocked)
             if engine.is_info_only_env_read(event, args):
-                _log_info_event(event, args)
+                if log_info:
+                    _log_info_event(event, args)
                 return
 
             if not engine.check_permission(event, args):
@@ -226,12 +263,15 @@ def setup_run_hook(engine: BoxEngine | None = None) -> None:
     if engine is None:
         engine = BoxEngine()
 
+    _configure_info_events(engine)
+
     def on_violation(event: str, args: tuple) -> None:
         _log_blocked(event, args)
         os._exit(78)
 
     hook = _create_hook_callback(engine, on_violation)
-    install_hook(hook)
+    blocklist = _build_blocklist(engine)
+    install_hook(hook, blocklist=blocklist if blocklist else None)
 
 
 # =============================================================================
@@ -252,11 +292,14 @@ def setup_force_hook(engine: BoxEngine | None = None) -> None:
     if engine is None:
         engine = BoxEngine()
 
+    _configure_info_events(engine)
+
     def on_violation(event: str, args: tuple) -> None:
         _log_violation(event, args, Color.YELLOW)
 
     hook = _create_hook_callback(engine, on_violation)
-    install_hook(hook)
+    blocklist = _build_blocklist(engine)
+    install_hook(hook, blocklist=blocklist if blocklist else None)
 
 
 # =============================================================================
@@ -369,6 +412,9 @@ def setup_review_hook(engine: BoxEngine | None = None) -> None:
     if engine is None:
         engine = BoxEngine()
 
+    _configure_info_events(engine)
+    log_info = engine.config.get("log_info_events", True)
+
     session_allowed: set[tuple] = set()
     in_hook = False
 
@@ -385,13 +431,14 @@ def setup_review_hook(engine: BoxEngine | None = None) -> None:
         if in_hook:
             return
 
-        # Info-only events: log immediately, no approval needed
+        # Info-only events: log immediately (if enabled), no approval needed
         if event in INFO_ONLY_EVENTS:
-            in_hook = True
-            try:
-                _log_info_event(event, args)
-            finally:
-                in_hook = False
+            if log_info:
+                in_hook = True
+                try:
+                    _log_info_event(event, args)
+                finally:
+                    in_hook = False
             return
 
         # Safe env var reads are silently allowed (no logging)
@@ -400,11 +447,12 @@ def setup_review_hook(engine: BoxEngine | None = None) -> None:
 
         # Non-sensitive env var reads are info-only
         if engine.is_info_only_env_read(event, args):
-            in_hook = True
-            try:
-                _log_info_event(event, args)
-            finally:
-                in_hook = False
+            if log_info:
+                in_hook = True
+                try:
+                    _log_info_event(event, args)
+                finally:
+                    in_hook = False
             return
 
         # Check if already approved this session
@@ -462,4 +510,5 @@ def setup_review_hook(engine: BoxEngine | None = None) -> None:
         engine.save_decisions()
 
     atexit.register(save_on_exit)
-    install_hook(hook, blocklist=REVIEW_BLOCKLIST)
+    blocklist = _build_blocklist(engine, REVIEW_BLOCKLIST)
+    install_hook(hook, blocklist=blocklist if blocklist else None)

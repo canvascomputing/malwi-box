@@ -56,6 +56,9 @@ static PyObject *g_os_environ_original = NULL;
 // Re-entrancy guard for env var events (prevents double-firing when os.getenv calls os.environ.get)
 static int g_in_env_callback = 0;
 
+// Flag to control info-only event logging (encoding, crypto detection in profile hook)
+static int g_log_info_events = 1;
+
 // =============================================================================
 // Section 3: AuditedEnviron Type - C wrapper for os.environ
 // =============================================================================
@@ -910,9 +913,11 @@ static int profile_hook(PyObject *obj, PyFrameObject *frame, int what, PyObject 
 
     // Handle Python function calls (PyTrace_CALL) for HTTP/encoding/crypto interception
     if (what == PyTrace_CALL) {
-        check_http_function_call(frame);
-        check_encoding_function_call(frame);
-        check_crypto_function_call(frame);
+        check_http_function_call(frame);  // Always run - security relevant
+        if (g_log_info_events) {
+            check_encoding_function_call(frame);  // Info-only when enabled
+            check_crypto_function_call(frame);    // Info-only when enabled
+        }
     }
 
     // Note: env var monitoring is handled by AuditedEnviron wrapper and audited_getenv,
@@ -1059,6 +1064,16 @@ static PyObject* set_blocklist(PyObject *self, PyObject *args) {
     Py_RETURN_NONE;
 }
 
+// Python-callable function to enable/disable info-only event logging
+static PyObject* set_log_info_events(PyObject *self, PyObject *args) {
+    int enabled;
+    if (!PyArg_ParseTuple(args, "p", &enabled)) {
+        return NULL;
+    }
+    g_log_info_events = enabled;
+    Py_RETURN_NONE;
+}
+
 // =============================================================================
 // Section 8: Module Definition and Initialization
 // =============================================================================
@@ -1074,6 +1089,10 @@ static PyMethodDef module_methods[] = {
      "Set a blocklist of event names to skip.\n\n"
      "Args:\n"
      "    blocklist: A set, list, or tuple of event names to block, or None to clear\n"},
+    {"set_log_info_events", set_log_info_events, METH_VARARGS,
+     "Enable or disable info-only event logging (encoding, crypto detection).\n\n"
+     "Args:\n"
+     "    enabled: bool - True to log info events, False to skip them\n"},
     {NULL, NULL, 0, NULL}
 };
 

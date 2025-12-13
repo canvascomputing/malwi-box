@@ -328,6 +328,8 @@ class BoxEngine:
             "allow_env_var_reads": ["$SAFE_ENV_VARS"],
             # Sockets
             "allow_raw_sockets": False,
+            # Performance
+            "log_info_events": True,
         }
 
     def _load_config(self) -> dict[str, Any]:
