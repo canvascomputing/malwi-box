@@ -205,6 +205,7 @@ Variables can be used in config values and are expanded at runtime.
 | `$PYTHON_STDLIB` | Python standard library |
 | `$PYTHON_SITE_PACKAGES` | Installed packages (purelib) |
 | `$PYTHON_PLATLIB` | Platform-specific packages |
+| `$PYTHON_USER_SITE` | User site-packages (`~/.local/lib/pythonX.Y/site-packages`) |
 | `$PYTHON_PREFIX` | Python installation prefix |
 | `$ENV{VAR}` | Any environment variable |
 | **List variables** | *Expand to multiple values* |
@@ -220,10 +221,10 @@ All `allow_*` attributes consistently block when empty. Use variables to documen
 
 | Attribute | Empty Behavior | Default |
 |-----------|---------------|---------|
-| `allow_read` | Block all | `$PWD`, `$PYTHON_STDLIB`, `$PYTHON_SITE_PACKAGES`, `$PYTHON_PLATLIB`, `$PIP_CACHE`, `$TMPDIR`, `$CACHE_HOME` |
-| `allow_create` | Block all | `$PWD`, `$TMPDIR`, `$PIP_CACHE` |
-| `allow_modify` | Block all | `$TMPDIR`, `$PIP_CACHE` |
-| `allow_delete` | Block all | `$TMPDIR`, `$PIP_CACHE` |
+| `allow_read` | Block all | `$PWD`, `$PYTHON_STDLIB`, `$PYTHON_SITE_PACKAGES`, `$PYTHON_PLATLIB`, `$PYTHON_USER_SITE`, `$PIP_CACHE`, `$TMPDIR`, `$CACHE_HOME` |
+| `allow_create` | Block all | `$PWD`, `$TMPDIR`, `$PIP_CACHE`, `$PYTHON_USER_SITE` |
+| `allow_modify` | Block all | `$TMPDIR`, `$PIP_CACHE`, `$PYTHON_USER_SITE` |
+| `allow_delete` | Block all | `$TMPDIR`, `$PIP_CACHE`, `$PYTHON_USER_SITE` |
 | `allow_domains` | Block all | `$PYPI_DOMAINS` |
 | `allow_ips` | Block all | `$LOCALHOST` |
 | `allow_http_urls` | Block all | `$PYPI_DOMAINS/*` |

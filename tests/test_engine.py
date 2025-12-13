@@ -1079,6 +1079,16 @@ class TestPathVariableExpansion:
         expected = sysconfig.get_path("purelib") or ""
         assert result == expected
 
+    def test_expand_python_user_site(self, tmp_path):
+        """Test that $PYTHON_USER_SITE is expanded correctly."""
+        import site
+
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box.toml", workdir=tmp_path)
+
+        result = engine._expand_path_variables("$PYTHON_USER_SITE")
+        expected = site.getusersitepackages()
+        assert result == expected
+
     def test_expand_env_var(self, tmp_path, monkeypatch):
         """Test that $ENV{VAR} expands to environment variable."""
         monkeypatch.setenv("MY_TEST_VAR", "/custom/path")

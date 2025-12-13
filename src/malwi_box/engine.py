@@ -8,6 +8,7 @@ import ipaddress
 import os
 import re
 import shutil
+import site
 import socket
 import sys
 import sysconfig
@@ -309,13 +310,14 @@ class BoxEngine:
                 "$PYTHON_STDLIB",
                 "$PYTHON_SITE_PACKAGES",
                 "$PYTHON_PLATLIB",
+                "$PYTHON_USER_SITE",
                 "$PIP_CACHE",
                 "$TMPDIR",
                 "$CACHE_HOME",
             ],
-            "allow_create": ["$PWD", "$TMPDIR", "$PIP_CACHE"],
-            "allow_modify": ["$TMPDIR", "$PIP_CACHE"],
-            "allow_delete": ["$TMPDIR", "$PIP_CACHE"],
+            "allow_create": ["$PWD", "$TMPDIR", "$PIP_CACHE", "$PYTHON_USER_SITE"],
+            "allow_modify": ["$TMPDIR", "$PIP_CACHE", "$PYTHON_USER_SITE"],
+            "allow_delete": ["$TMPDIR", "$PIP_CACHE", "$PYTHON_USER_SITE"],
             # Network - using $PYPI_DOMAINS variable
             "allow_domains": ["$PYPI_DOMAINS"],
             "allow_ips": ["$LOCALHOST"],
@@ -376,6 +378,7 @@ class BoxEngine:
             # Python ecosystem (most specific)
             (self._get_pip_cache(), "$PIP_CACHE"),
             (os.environ.get("VIRTUAL_ENV", ""), "$VENV"),
+            (site.getusersitepackages(), "$PYTHON_USER_SITE"),
             (sysconfig.get_path("purelib") or "", "$PYTHON_SITE_PACKAGES"),
             (sysconfig.get_path("platlib") or "", "$PYTHON_PLATLIB"),
             (sysconfig.get_path("stdlib") or "", "$PYTHON_STDLIB"),
@@ -392,8 +395,8 @@ class BoxEngine:
 
         Supports:
           $PWD, $HOME, $TMPDIR, $CACHE_HOME
-          $PYTHON_STDLIB, $PYTHON_SITE_PACKAGES, $PYTHON_PLATLIB, $PYTHON_PREFIX
-          $PIP_CACHE, $VENV
+          $PYTHON_STDLIB, $PYTHON_SITE_PACKAGES, $PYTHON_PLATLIB, $PYTHON_USER_SITE
+          $PYTHON_PREFIX, $PIP_CACHE, $VENV
           $ENV{VAR_NAME}
         """
         if "$" not in path:
