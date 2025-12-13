@@ -710,9 +710,9 @@ class TestExecutableControl:
 
         saved_config = toml.loads(config_path.read_text())
         executables = saved_config.get("allow_executables", [])
-        assert len(executables) == 1
-        # Should be plain string since we can't compute hash
-        assert executables[0] == "nonexistent_binary_xyz"
+        # Default has $OS_SYSTEM, plus our new entry
+        assert "$OS_SYSTEM" in executables
+        assert "nonexistent_binary_xyz" in executables
 
 
 class TestDomainPermissions:
@@ -946,12 +946,13 @@ class TestDecisionRecording:
         saved_config = toml.loads(config_path.read_text())
         # Command is saved exactly (user can manually edit to use glob patterns)
         assert "git status" in saved_config.get("allow_shell_commands", [])
-        # Executable should be saved with hash
+        # Executable should be saved with hash, along with default $OS_SYSTEM
         executables = saved_config.get("allow_executables", [])
-        assert len(executables) == 1
-        entry = executables[0]
-        assert isinstance(entry, dict)
-        assert entry["path"] == "git"
+        assert "$OS_SYSTEM" in executables
+        # Find the git entry (dict with path and hash)
+        git_entries = [e for e in executables if isinstance(e, dict) and e.get("path") == "git"]
+        assert len(git_entries) == 1
+        entry = git_entries[0]
         assert entry["hash"].startswith("sha256:")
 
     def test_record_and_save_domain_with_port(self, tmp_path):
@@ -1050,33 +1051,39 @@ class TestPathVariableExpansion:
         assert result == expected
 
     def test_expand_tmpdir(self, tmp_path):
-        """Test that $TMPDIR is expanded correctly."""
+        """Test that $TMPDIR is expanded correctly (resolved to handle symlinks)."""
         import tempfile
+        from pathlib import Path
 
         engine = BoxEngine(config_path=tmp_path / ".malwi-box.toml", workdir=tmp_path)
 
         result = engine._expand_path_variables("$TMPDIR/test")
-        expected = tempfile.gettempdir() + "/test"
+        # Path is resolved to handle symlinks like /var -> /private/var on macOS
+        expected = str(Path(tempfile.gettempdir()).resolve()) + "/test"
         assert result == expected
 
     def test_expand_python_stdlib(self, tmp_path):
-        """Test that $PYTHON_STDLIB is expanded correctly."""
+        """Test that $PYTHON_STDLIB is expanded correctly (resolved)."""
         import sysconfig
+        from pathlib import Path
 
         engine = BoxEngine(config_path=tmp_path / ".malwi-box.toml", workdir=tmp_path)
 
         result = engine._expand_path_variables("$PYTHON_STDLIB")
-        expected = sysconfig.get_path("stdlib") or ""
+        # Paths are resolved to handle symlinks
+        expected = str(Path(sysconfig.get_path("stdlib") or "").resolve())
         assert result == expected
 
     def test_expand_python_site_packages(self, tmp_path):
-        """Test that $PYTHON_SITE_PACKAGES is expanded correctly."""
+        """Test that $PYTHON_SITE_PACKAGES is expanded correctly (resolved)."""
         import sysconfig
+        from pathlib import Path
 
         engine = BoxEngine(config_path=tmp_path / ".malwi-box.toml", workdir=tmp_path)
 
         result = engine._expand_path_variables("$PYTHON_SITE_PACKAGES")
-        expected = sysconfig.get_path("purelib") or ""
+        # Paths are resolved to handle symlinks
+        expected = str(Path(sysconfig.get_path("purelib") or "").resolve())
         assert result == expected
 
     def test_expand_python_user_site(self, tmp_path):
@@ -1107,6 +1114,21 @@ class TestPathVariableExpansion:
             assert result == ["/System", "/Library", "/usr/lib", "/usr/share"]
         else:
             assert result == ["/usr/lib", "/usr/share", "/lib", "/lib64"]
+
+    def test_os_system_paths_allowed_for_read(self, tmp_path):
+        """Test that $OS_SYSTEM paths are allowed for reading."""
+        import sys
+        from pathlib import Path
+
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box.toml", workdir=tmp_path)
+
+        # These should be allowed by default via $OS_SYSTEM
+        if sys.platform == "darwin":
+            assert engine._check_read_permission(Path("/System/Library/CoreServices"))
+            assert engine._check_read_permission(Path("/Library/Frameworks"))
+        else:
+            assert engine._check_read_permission(Path("/usr/lib"))
+            assert engine._check_read_permission(Path("/usr/share"))
 
     def test_variables_work_in_config(self, tmp_path):
         """Test that variables in config are expanded for permission checks."""

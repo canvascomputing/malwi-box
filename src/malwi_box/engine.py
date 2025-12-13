@@ -323,16 +323,16 @@ class BoxEngine:
                 "$CACHE_HOME",
                 "$OS_SYSTEM",
             ],
-            "allow_create": ["$PWD", "$TMPDIR", "$PIP_CACHE", "$PYTHON_USER_SITE"],
-            "allow_modify": ["$TMPDIR", "$PIP_CACHE", "$PYTHON_USER_SITE"],
-            "allow_delete": ["$TMPDIR", "$PIP_CACHE", "$PYTHON_USER_SITE"],
+            "allow_create": ["$PWD", "$TMPDIR", "$PIP_CACHE", "$PYTHON_USER_SITE", "$PYTHON_SITE_PACKAGES"],
+            "allow_modify": ["$TMPDIR", "$PIP_CACHE", "$PYTHON_USER_SITE", "$PYTHON_SITE_PACKAGES"],
+            "allow_delete": ["$TMPDIR", "$PIP_CACHE", "$PYTHON_USER_SITE", "$PYTHON_SITE_PACKAGES"],
             # Network - using $PYPI_DOMAINS variable
             "allow_domains": ["$PYPI_DOMAINS"],
             "allow_ips": ["$LOCALHOST"],
             "allow_http_urls": ["$PYPI_DOMAINS/*"],
             "allow_http_methods": ["$ALL_HTTP_METHODS"],
-            # Execution - empty = block all
-            "allow_executables": [],
+            # Execution - OS system libraries only
+            "allow_executables": ["$OS_SYSTEM"],
             "allow_shell_commands": [],
             # Environment
             "allow_env_var_reads": ["$SAFE_ENV_VARS"],
@@ -374,21 +374,27 @@ class BoxEngine:
 
         Order matters - more specific paths first for correct matching
         when converting paths to variables.
+
+        All paths are resolved to handle symlinks (e.g., /var -> /private/var on macOS).
         """
+
+        def resolve(p: str) -> str:
+            return str(Path(p).resolve()) if p else ""
+
         return [
             # Python ecosystem (most specific)
-            (self._get_pip_cache(), "$PIP_CACHE"),
-            (os.environ.get("VIRTUAL_ENV", ""), "$VENV"),
-            (site.getusersitepackages(), "$PYTHON_USER_SITE"),
-            (sysconfig.get_path("purelib") or "", "$PYTHON_SITE_PACKAGES"),
-            (sysconfig.get_path("platlib") or "", "$PYTHON_PLATLIB"),
-            (sysconfig.get_path("stdlib") or "", "$PYTHON_STDLIB"),
-            (sys.prefix, "$PYTHON_PREFIX"),
+            (resolve(self._get_pip_cache()), "$PIP_CACHE"),
+            (resolve(os.environ.get("VIRTUAL_ENV", "")), "$VENV"),
+            (resolve(site.getusersitepackages()), "$PYTHON_USER_SITE"),
+            (resolve(sysconfig.get_path("purelib") or ""), "$PYTHON_SITE_PACKAGES"),
+            (resolve(sysconfig.get_path("platlib") or ""), "$PYTHON_PLATLIB"),
+            (resolve(sysconfig.get_path("stdlib") or ""), "$PYTHON_STDLIB"),
+            (resolve(sys.prefix), "$PYTHON_PREFIX"),
             # System paths - order: cache, PWD, TMPDIR, HOME
-            (self._get_cache_home(), "$CACHE_HOME"),
-            (str(self.workdir), "$PWD"),
-            (tempfile.gettempdir(), "$TMPDIR"),
-            (os.path.expanduser("~"), "$HOME"),
+            (resolve(self._get_cache_home()), "$CACHE_HOME"),
+            (str(self.workdir.resolve()), "$PWD"),
+            (resolve(tempfile.gettempdir()), "$TMPDIR"),
+            (resolve(os.path.expanduser("~")), "$HOME"),
         ]
 
     def _expand_path_variables(self, path: str) -> str:
@@ -429,19 +435,35 @@ class BoxEngine:
 
         return [entry]
 
-    def _expand_config_list(self, config_key: str) -> list[str]:
-        """Get config list with all variables expanded."""
+    def _expand_config_list(self, config_key: str) -> list[str | dict]:
+        """Get config list with all variables expanded.
+
+        Dict entries (e.g., {"path": "/usr/bin/git", "hash": "sha256:..."})
+        are passed through unchanged since they're not variable references.
+        """
         entries = self.config.get(config_key, [])
         result = []
         for entry in entries:
-            result.extend(self._expand_list_variable(entry))
+            if isinstance(entry, dict):
+                result.append(entry)
+            else:
+                result.extend(self._expand_list_variable(entry))
         return result
 
     def _path_to_variable(self, path: str) -> str:
-        """Convert an absolute path to a variable if possible."""
+        """Convert an absolute path to a variable if possible.
+
+        The input path is resolved to handle symlinks before comparison.
+        Relative paths that don't exist are returned unchanged.
+        """
+        p = Path(path)
+        if not (p.is_absolute() or p.exists()):
+            return path
+
+        resolved = str(p.resolve())
         for prefix, var in self._get_path_variable_mappings():
-            if prefix and path.startswith(prefix):
-                return path.replace(prefix, var, 1)
+            if prefix and resolved.startswith(prefix):
+                return resolved.replace(prefix, var, 1)
 
         return path
 
@@ -651,7 +673,7 @@ class BoxEngine:
         if check_sensitive and self._is_sensitive_path(path):
             return False
         return self._check_path_permission(
-            path, self.config.get(config_key, []), check_hash=check_hash
+            path, self._expand_config_list(config_key), check_hash=check_hash
         )
 
     def _check_read_permission(self, path: Path) -> bool:
@@ -769,7 +791,7 @@ class BoxEngine:
         if executable is None:
             return True  # Can't determine executable, allow
 
-        allow_list = self.config.get("allow_executables", [])
+        allow_list = self._expand_config_list("allow_executables")
         if not allow_list:
             return False  # Empty list = block all executables
 
