@@ -313,6 +313,7 @@ class BoxEngine:
             # File access
             "allow_read": [
                 "$PWD",
+                "$PYTHON_PREFIX",
                 "$PYTHON_STDLIB",
                 "$PYTHON_SITE_PACKAGES",
                 "$PYTHON_PLATLIB",

@@ -222,7 +222,7 @@ All `allow_*` attributes consistently block when empty. Use variables to documen
 
 | Attribute | Empty Behavior | Default |
 |-----------|---------------|---------|
-| `allow_read` | Block all | `$PWD`, `$PYTHON_STDLIB`, `$PYTHON_SITE_PACKAGES`, `$PYTHON_PLATLIB`, `$PYTHON_USER_SITE`, `$PIP_CACHE`, `$TMPDIR`, `$CACHE_HOME`, `$OS_SYSTEM` |
+| `allow_read` | Block all | `$PWD`, `$PYTHON_PREFIX`, `$PYTHON_STDLIB`, `$PYTHON_SITE_PACKAGES`, `$PYTHON_PLATLIB`, `$PYTHON_USER_SITE`, `$PIP_CACHE`, `$TMPDIR`, `$CACHE_HOME`, `$OS_SYSTEM` |
 | `allow_create` | Block all | `$PWD`, `$TMPDIR`, `$PIP_CACHE`, `$PYTHON_USER_SITE` |
 | `allow_modify` | Block all | `$TMPDIR`, `$PIP_CACHE`, `$PYTHON_USER_SITE` |
 | `allow_delete` | Block all | `$TMPDIR`, `$PIP_CACHE`, `$PYTHON_USER_SITE` |
