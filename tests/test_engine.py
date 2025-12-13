@@ -1111,6 +1111,18 @@ class TestPathVariableExpansion:
         result = engine._expand_path_variables("/some/absolute/path")
         assert result == "/some/absolute/path"
 
+    def test_expand_os_system_list_variable(self, tmp_path):
+        """Test that $OS_SYSTEM list variable expands correctly."""
+        import sys
+
+        engine = BoxEngine(config_path=tmp_path / ".malwi-box.toml", workdir=tmp_path)
+
+        result = engine._expand_list_variable("$OS_SYSTEM")
+        if sys.platform == "darwin":
+            assert result == ["/System", "/Library", "/usr/lib", "/usr/share"]
+        else:
+            assert result == ["/usr/lib", "/usr/share", "/lib", "/lib64"]
+
     def test_variables_work_in_config(self, tmp_path):
         """Test that variables in config are expanded for permission checks."""
         config = {"allow_read": ["$PWD/allowed"]}

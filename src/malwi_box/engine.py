@@ -69,6 +69,12 @@ LIST_VARIABLES: dict[str, list[str]] = {
         # Build reproducibility
         "SOURCE_DATE_EPOCH",
     ],
+    # OS system paths - read-only system directories
+    "$OS_SYSTEM": (
+        ["/System", "/Library", "/usr/lib", "/usr/share"]
+        if sys.platform == "darwin"
+        else ["/usr/lib", "/usr/share", "/lib", "/lib64"]
+    ),
 }
 
 # Events that can execute native binaries or load shared libraries
@@ -314,6 +320,7 @@ class BoxEngine:
                 "$PIP_CACHE",
                 "$TMPDIR",
                 "$CACHE_HOME",
+                "$OS_SYSTEM",
             ],
             "allow_create": ["$PWD", "$TMPDIR", "$PIP_CACHE", "$PYTHON_USER_SITE"],
             "allow_modify": ["$TMPDIR", "$PIP_CACHE", "$PYTHON_USER_SITE"],
@@ -360,13 +367,6 @@ class BoxEngine:
     def _get_pip_cache(self) -> str:
         """Get pip cache directory."""
         return os.path.join(self._get_cache_home(), "pip")
-
-    def _get_os_system_paths(self) -> list[str]:
-        """Get OS system read-only paths."""
-        if sys.platform == "darwin":
-            return ["/System", "/Library", "/usr/lib", "/usr/share"]
-        else:  # Linux
-            return ["/usr/lib", "/usr/share", "/lib", "/lib64"]
 
     def _get_path_variable_mappings(self) -> list[tuple[str, str]]:
         """Return ordered list of (path, variable) mappings.

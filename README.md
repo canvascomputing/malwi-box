@@ -213,6 +213,7 @@ Variables can be used in config values and are expanded at runtime.
 | `$LOCALHOST` | `127.0.0.1`, `::1`, `localhost` |
 | `$ALL_HTTP_METHODS` | `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD`, `OPTIONS` |
 | `$SAFE_ENV_VARS` | `PATH`, `HOME`, `USER`, `SHELL`, `TERM`, `LANG`, `LC_ALL`, `LC_CTYPE`, `PWD`, `OLDPWD`, `TMPDIR`, `TMP`, `TEMP`, `PYTHONPATH`, `VIRTUAL_ENV`, `CONDA_PREFIX`, `SOURCE_DATE_EPOCH` |
+| `$OS_SYSTEM` | OS system paths (macOS: `/System`, `/Library`, `/usr/lib`, `/usr/share`; Linux: `/usr/lib`, `/usr/share`, `/lib`, `/lib64`) |
 
 List variables can be combined with patterns: `$PYPI_DOMAINS/*` expands to `pypi.org/*`, `files.pythonhosted.org/*`.
 
@@ -221,7 +222,7 @@ All `allow_*` attributes consistently block when empty. Use variables to documen
 
 | Attribute | Empty Behavior | Default |
 |-----------|---------------|---------|
-| `allow_read` | Block all | `$PWD`, `$PYTHON_STDLIB`, `$PYTHON_SITE_PACKAGES`, `$PYTHON_PLATLIB`, `$PYTHON_USER_SITE`, `$PIP_CACHE`, `$TMPDIR`, `$CACHE_HOME` |
+| `allow_read` | Block all | `$PWD`, `$PYTHON_STDLIB`, `$PYTHON_SITE_PACKAGES`, `$PYTHON_PLATLIB`, `$PYTHON_USER_SITE`, `$PIP_CACHE`, `$TMPDIR`, `$CACHE_HOME`, `$OS_SYSTEM` |
 | `allow_create` | Block all | `$PWD`, `$TMPDIR`, `$PIP_CACHE`, `$PYTHON_USER_SITE` |
 | `allow_modify` | Block all | `$TMPDIR`, `$PIP_CACHE`, `$PYTHON_USER_SITE` |
 | `allow_delete` | Block all | `$TMPDIR`, `$PIP_CACHE`, `$PYTHON_USER_SITE` |
