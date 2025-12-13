@@ -1327,7 +1327,9 @@ class BoxEngine:
                     config.setdefault("allow_http_urls", []).append(url_pattern)
             if method:
                 method_upper = method.upper()
-                if method_upper not in config.get("allow_http_methods", []):
+                expanded_methods = self._expand_config_list("allow_http_methods")
+                current_methods = config.get("allow_http_methods", [])
+                if method_upper not in expanded_methods and method_upper not in current_methods:
                     config.setdefault("allow_http_methods", []).append(method_upper)
 
     def _save_delete_decision(self, config: dict, decision: dict) -> None:

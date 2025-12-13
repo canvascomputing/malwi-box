@@ -1016,6 +1016,49 @@ class TestDecisionRecording:
         assert "allow_delete" in saved_config
         assert "$PWD/to_delete.txt" in saved_config["allow_delete"]
 
+    def test_save_http_method_not_duplicated_with_all_methods_variable(self, tmp_path):
+        """Test that HTTP methods covered by $ALL_HTTP_METHODS aren't duplicated."""
+        config_path = tmp_path / ".malwi-box.toml"
+        # Config with $ALL_HTTP_METHODS already set
+        config_path.write_text('allow_http_methods = ["$ALL_HTTP_METHODS"]')
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Record a GET request - should not be added since $ALL_HTTP_METHODS covers it
+        engine.record_decision(
+            "urllib.Request",
+            (),
+            allowed=True,
+            details={"url": "https://example.com/api", "method": "GET"},
+        )
+        engine.save_decisions()
+
+        saved_config = toml.loads(config_path.read_text())
+        methods = saved_config.get("allow_http_methods", [])
+        assert methods == ["$ALL_HTTP_METHODS"]
+        assert "GET" not in methods
+
+    def test_save_http_method_no_duplicates(self, tmp_path):
+        """Test that the same HTTP method isn't saved multiple times."""
+        config_path = tmp_path / ".malwi-box.toml"
+        config_path.write_text('allow_http_methods = []')
+
+        engine = BoxEngine(config_path=str(config_path), workdir=tmp_path)
+
+        # Record multiple GET requests
+        for i in range(3):
+            engine.record_decision(
+                "urllib.Request",
+                (),
+                allowed=True,
+                details={"url": f"https://example.com/api/{i}", "method": "GET"},
+            )
+        engine.save_decisions()
+
+        saved_config = toml.loads(config_path.read_text())
+        methods = saved_config.get("allow_http_methods", [])
+        assert methods.count("GET") == 1
+
 
 class TestUnhandledEvents:
     """Tests for events not explicitly handled."""
