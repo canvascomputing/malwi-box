@@ -4,7 +4,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from malwi_box.hook import _prompt_approval
+from malwi_box.hook import Color, _prompt_approval
+
+# Expected prompt with CLEAR_LINE prefix
+EXPECTED_PROMPT = f"{Color.CLEAR_LINE}Approve? [Y/n/i]: "
 
 
 def create_mock_tty(read_value: str):
@@ -38,7 +41,7 @@ class TestPromptApproval:
                 result = _prompt_approval()
 
         assert result == "y"
-        mock_tty_out.write.assert_called_with("Approve? [Y/n/i]: ")
+        mock_tty_out.write.assert_called_with(EXPECTED_PROMPT)
         mock_tty_out.flush.assert_called()
 
     def test_tty_success_no(self):
@@ -94,7 +97,7 @@ class TestPromptApproval:
                     result = _prompt_approval()
 
         assert result == "y"
-        mock_input.assert_called_once_with("Approve? [Y/n/i]: ")
+        mock_input.assert_called_once_with(EXPECTED_PROMPT)
 
     def test_fallback_input_strips_and_lowercases(self):
         """Test that fallback input is also stripped and lowercased."""
@@ -127,4 +130,4 @@ class TestPromptApproval:
                 result = _prompt_approval()
 
         assert result == "y"
-        mock_input.assert_called_once_with("Approve? [Y/n/i]: ")
+        mock_input.assert_called_once_with(EXPECTED_PROMPT)

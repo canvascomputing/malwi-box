@@ -39,6 +39,9 @@ class Color:
     YELLOW = "\033[33m"
     CYAN = "\033[36m"
     RESET = "\033[0m"
+    # Line control: move to start of line and clear it
+    # This ensures our output isn't overwritten by progress bars/spinners
+    CLEAR_LINE = "\r\033[K"
 
 
 # =============================================================================
@@ -146,7 +149,8 @@ def _log_info_event(event: str, args: tuple) -> None:
 
     formatted = format_event(event, args)
     location = _get_caller_location()
-    msg = f"{Color.CYAN}[malwi-box] {formatted}{location}{Color.RESET}\n"
+    # Clear line first to avoid being overwritten by progress bars
+    msg = f"{Color.CLEAR_LINE}{Color.CYAN}[malwi-box] {formatted}{location}{Color.RESET}\n"
     sys.stderr.write(msg)
     sys.stderr.flush()
 
@@ -155,7 +159,8 @@ def _log_violation(event: str, args: tuple, color: str) -> None:
     """Log a permission violation with specified color."""
     from malwi_box import format_event
 
-    msg = f"{color}[malwi-box] {format_event(event, args)}{Color.RESET}\n"
+    # Clear line first to avoid being overwritten by progress bars
+    msg = f"{Color.CLEAR_LINE}{color}[malwi-box] {format_event(event, args)}{Color.RESET}\n"
     sys.stderr.write(msg)
     sys.stderr.flush()
 
@@ -164,7 +169,8 @@ def _log_blocked(event: str, args: tuple) -> None:
     """Log a blocked event (red color with 'Blocked:' prefix)."""
     from malwi_box import format_event
 
-    msg = f"{Color.RED}[malwi-box] Blocked: {format_event(event, args)}{Color.RESET}\n"
+    # Clear line first to avoid being overwritten by progress bars
+    msg = f"{Color.CLEAR_LINE}{Color.RED}[malwi-box] Blocked: {format_event(event, args)}{Color.RESET}\n"
     sys.stderr.write(msg)
     sys.stderr.flush()
 
@@ -176,7 +182,8 @@ def _prompt_approval() -> str:
     writing to stdout (e.g., loading animations with \\r).
     Falls back to input() when stdin is piped (e.g., tests, CI).
     """
-    prompt = "Approve? [Y/n/i]: "
+    # Clear line to ensure prompt is visible over progress bars
+    prompt = f"{Color.CLEAR_LINE}Approve? [Y/n/i]: "
 
     # If stdin is piped, use input() to read from it
     if not sys.stdin.isatty():
