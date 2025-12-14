@@ -325,7 +325,7 @@ class BoxEngine:
             ],
             "allow_create": ["$PWD", "$TMPDIR", "$PIP_CACHE", "$PYTHON_USER_SITE", "$PYTHON_SITE_PACKAGES"],
             "allow_modify": ["$TMPDIR", "$PIP_CACHE", "$PYTHON_USER_SITE", "$PYTHON_SITE_PACKAGES"],
-            "allow_delete": ["$TMPDIR", "$PIP_CACHE", "$PYTHON_USER_SITE", "$PYTHON_SITE_PACKAGES"],
+            "allow_delete": ["$PWD", "$TMPDIR", "$PIP_CACHE", "$PYTHON_USER_SITE", "$PYTHON_SITE_PACKAGES"],
             # Network - using $PYPI_DOMAINS variable
             "allow_domains": ["$PYPI_DOMAINS"],
             "allow_ips": ["$LOCALHOST"],

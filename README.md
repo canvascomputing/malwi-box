@@ -224,7 +224,7 @@ All `allow_*` attributes consistently block when empty. Use variables to documen
 | `allow_read` | Block all | `$PWD`, `$PYTHON_PREFIX`, `$PYTHON_STDLIB`, `$PYTHON_SITE_PACKAGES`, `$PYTHON_PLATLIB`, `$PYTHON_USER_SITE`, `$PIP_CACHE`, `$TMPDIR`, `$CACHE_HOME`, `$OS_SYSTEM` |
 | `allow_create` | Block all | `$PWD`, `$TMPDIR`, `$PIP_CACHE`, `$PYTHON_USER_SITE`, `$PYTHON_SITE_PACKAGES` |
 | `allow_modify` | Block all | `$TMPDIR`, `$PIP_CACHE`, `$PYTHON_USER_SITE`, `$PYTHON_SITE_PACKAGES` |
-| `allow_delete` | Block all | `$TMPDIR`, `$PIP_CACHE`, `$PYTHON_USER_SITE`, `$PYTHON_SITE_PACKAGES` |
+| `allow_delete` | Block all | `$PWD`, `$TMPDIR`, `$PIP_CACHE`, `$PYTHON_USER_SITE`, `$PYTHON_SITE_PACKAGES` |
 | `allow_domains` | Block all | `$PYPI_DOMAINS` |
 | `allow_ips` | Block all | `$LOCALHOST` |
 | `allow_http_urls` | Block all | `$PYPI_DOMAINS/*` |
