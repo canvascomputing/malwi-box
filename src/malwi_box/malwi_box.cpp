@@ -322,7 +322,7 @@ static int audit_hook(const char *event, PyObject *args, void *userData) {
     if (is_blocked_event(event)) {
         PySys_WriteStderr("[malwi-box] BLOCKED: %s - Terminating for security\n", event);
         fflush(stderr);
-        _exit(77);  // Use _exit to terminate immediately without cleanup
+        _exit(78);  // Use _exit to terminate immediately without cleanup
     }
 
     // Skip if interpreter is finalizing to avoid accessing freed objects

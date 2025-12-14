@@ -234,15 +234,17 @@ def _create_hook_callback(
                     _log_info_event(event, args)
                 return
 
-            # Safe env var reads are silently allowed (no logging)
-            if engine.is_safe_env_read(event, args):
-                return
-
-            # Non-sensitive env var reads are info-only (logged but not blocked)
-            if engine.is_info_only_env_read(event, args):
-                if log_info:
-                    _log_info_event(event, args)
-                return
+            # Handle env var reads with unified classification
+            if event in ("os.getenv", "os.environ.get"):
+                var_name = args[0] if args else ""
+                classification = engine.classify_env_var(var_name)
+                if classification == "silent":
+                    return  # No logging
+                if classification == "info":
+                    if log_info:
+                        _log_info_event(event, args)
+                    return
+                # "block" falls through to permission check
 
             if not engine.check_permission(event, args):
                 on_violation(event, args)
@@ -448,19 +450,21 @@ def setup_review_hook(engine: BoxEngine | None = None) -> None:
                     in_hook = False
             return
 
-        # Safe env var reads are silently allowed (no logging)
-        if engine.is_safe_env_read(event, args):
-            return
-
-        # Non-sensitive env var reads are info-only
-        if engine.is_info_only_env_read(event, args):
-            if log_info:
-                in_hook = True
-                try:
-                    _log_info_event(event, args)
-                finally:
-                    in_hook = False
-            return
+        # Handle env var reads with unified classification
+        if event in ("os.getenv", "os.environ.get"):
+            var_name = args[0] if args else ""
+            classification = engine.classify_env_var(var_name)
+            if classification == "silent":
+                return  # No logging
+            if classification == "info":
+                if log_info:
+                    in_hook = True
+                    try:
+                        _log_info_event(event, args)
+                    finally:
+                        in_hook = False
+                return
+            # "block" falls through to permission check
 
         # Check if already approved this session
         key = (event, make_hashable(args))

@@ -278,6 +278,14 @@ SENSITIVE_ENV_VARS = [
     "TOKEN",
 ]
 
+# Localhost addresses for fast lookup
+LOCALHOST_ADDRESSES = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def is_localhost(host: str) -> bool:
+    """Check if host is a localhost address (hostname or IP)."""
+    return host in LOCALHOST_ADDRESSES
+
 
 class BoxEngine:
     """Permission engine for audit event enforcement.
@@ -494,35 +502,32 @@ class BoxEngine:
             var_name = var_name.decode("utf-8", errors="replace")
         return var_name in SENSITIVE_ENV_VARS
 
-    def is_info_only_env_read(self, event: str, args: tuple) -> bool:
-        """Check if this is a non-sensitive env var read (info-only).
+    def classify_env_var(self, var_name: str | bytes) -> str:
+        """Classify how an env var read should be handled.
 
-        Returns True if this is an env read event for a non-sensitive var.
-        These should be logged as info events, not blocked.
+        Args:
+            var_name: The environment variable name
+
+        Returns:
+            One of:
+            - "silent": Safe vars - no logging needed
+            - "info": Non-sensitive vars - log as info only
+            - "block": Sensitive vars - always blocked
         """
-        if event not in ("os.getenv", "os.environ.get"):
-            return False
-        if not args:
-            return False
-        var_name = args[0]
         if isinstance(var_name, bytes):
             var_name = var_name.decode("utf-8", errors="replace")
-        return not self._is_sensitive_env_var(var_name)
 
-    def is_safe_env_read(self, event: str, args: tuple) -> bool:
-        """Check if this is a safe env var read that should be silently allowed.
+        # Sensitive vars always blocked
+        if self._is_sensitive_env_var(var_name):
+            return "block"
 
-        Returns True if this is an env read event for a var in $SAFE_ENV_VARS.
-        These should not be logged at all.
-        """
-        if event not in ("os.getenv", "os.environ.get"):
-            return False
-        if not args:
-            return False
-        var_name = args[0]
-        if isinstance(var_name, bytes):
-            var_name = var_name.decode("utf-8", errors="replace")
-        return var_name in LIST_VARIABLES.get("$SAFE_ENV_VARS", [])
+        # Safe vars silently allowed
+        safe_vars = LIST_VARIABLES.get("$SAFE_ENV_VARS", [])
+        if var_name in safe_vars:
+            return "silent"
+
+        # Non-sensitive vars logged as info
+        return "info"
 
     def _resolve_path(self, path: str | Path) -> Path:
         """Resolve a path to an absolute path, expanding variables."""
@@ -684,11 +689,13 @@ class BoxEngine:
 
     def _check_create_permission(self, path: Path) -> bool:
         """Check if creating a new file is permitted."""
-        return self._check_file_permission(path, "allow_create")
+        return self._check_file_permission(path, "allow_create", check_sensitive=True)
 
     def _check_modify_permission(self, path: Path) -> bool:
         """Check if modifying an existing file is permitted."""
-        return self._check_file_permission(path, "allow_modify", check_hash=True)
+        return self._check_file_permission(
+            path, "allow_modify", check_hash=True, check_sensitive=True
+        )
 
     def _check_delete_permission(self, path: Path) -> bool:
         """Check if deleting a file is permitted."""
@@ -957,7 +964,7 @@ class BoxEngine:
                 continue
             # Handle "localhost" hostname
             if allowed_ip == "localhost":
-                if ip in ("127.0.0.1", "::1"):
+                if is_localhost(ip):
                     return True
                 continue
             try:
@@ -981,7 +988,7 @@ class BoxEngine:
         port = address[1] if len(address) > 1 else None
 
         # Allow localhost/loopback
-        if host in ("localhost", "127.0.0.1", "::1"):
+        if is_localhost(host):
             return True
 
         # Check if it's an IP address
@@ -1069,7 +1076,7 @@ class BoxEngine:
         # Allow localhost/loopback (consistent with _check_socket_connect)
         parsed = urlparse(url if "://" in url else f"https://{url}")
         host = parsed.hostname or ""
-        if host in ("localhost", "127.0.0.1", "::1"):
+        if is_localhost(host):
             return True
 
         # Check HTTP method restrictions (expand variables like $ALL_HTTP_METHODS)

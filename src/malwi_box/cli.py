@@ -4,112 +4,89 @@ import argparse
 import os
 import subprocess
 import sys
-import tempfile
 
 from malwi_box import __version__
 
-# Templates import the hook module which auto-setup on import
-RUN_SITECUSTOMIZE_TEMPLATE = (
-    "from malwi_box.hook import setup_run_hook; setup_run_hook()"
-)
-REVIEW_SITECUSTOMIZE_TEMPLATE = (
-    "from malwi_box.hook import setup_review_hook; setup_review_hook()"
-)
-FORCE_SITECUSTOMIZE_TEMPLATE = (
-    "from malwi_box.hook import setup_force_hook; setup_force_hook()"
-)
+
+def _get_mode(args: argparse.Namespace) -> str:
+    """Get the mode from args."""
+    if getattr(args, "force", False):
+        return "force"
+    elif getattr(args, "review", False):
+        return "review"
+    return "run"
 
 
-def _select_template(review: bool, force: bool) -> str:
-    """Select the appropriate sitecustomize template."""
-    if force:
-        return FORCE_SITECUSTOMIZE_TEMPLATE
-    elif review:
-        return REVIEW_SITECUSTOMIZE_TEMPLATE
-    else:
-        return RUN_SITECUSTOMIZE_TEMPLATE
+def run_command(args: argparse.Namespace) -> int:
+    """Run command with sandboxing using wrapper."""
+    from malwi_box.wrapper import cleanup_wrapper_bin_dir, setup_wrapper_bin_dir
 
+    command = list(args.command)
 
-def _setup_hook_env(template: str) -> tuple[str, dict[str, str]]:
-    """Create sitecustomize.py and return (tmpdir, env) for hook injection.
+    # Handle --review/--force in command args (legacy support)
+    if "--review" in command:
+        command.remove("--review")
+        args.review = True
+    if "--force" in command:
+        command.remove("--force")
+        args.force = True
 
-    Note: Caller must manage the temporary directory lifecycle.
-    """
-    tmpdir = tempfile.mkdtemp()
-    sitecustomize_path = os.path.join(tmpdir, "sitecustomize.py")
-    with open(sitecustomize_path, "w") as f:
-        f.write(template)
-
-    env = os.environ.copy()
-    existing_path = env.get("PYTHONPATH", "")
-    if existing_path:
-        env["PYTHONPATH"] = f"{tmpdir}{os.pathsep}{existing_path}"
-    else:
-        env["PYTHONPATH"] = tmpdir
-
-    return tmpdir, env
-
-
-def _run_with_hook_code(code: str, template: str) -> int:
-    """Run Python code string with the specified sitecustomize template."""
-    tmpdir, env = _setup_hook_env(template)
-    try:
-        cmd = [sys.executable, "-c", code]
-        result = subprocess.run(cmd, env=env)
-        return result.returncode
-    except KeyboardInterrupt:
-        return 130
-    finally:
-        import shutil
-
-        shutil.rmtree(tmpdir, ignore_errors=True)
-
-
-def _run_with_hook(command: list[str], template: str) -> int:
-    """Run a command with the specified sitecustomize template."""
     if not command:
         print("Error: No command specified", file=sys.stderr)
         return 1
 
-    tmpdir, env = _setup_hook_env(template)
+    mode = _get_mode(args)
+    config_path = getattr(args, "config_path", None)
+
+    bin_dir, wrapper_env = setup_wrapper_bin_dir(mode, config_path)
+    if bin_dir is None:
+        print("Error: Wrapper not available", file=sys.stderr)
+        return 1
+
     try:
+        env = os.environ.copy()
+        env.update(wrapper_env)
+        env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+
+        # Build command
         first = command[0]
         if first.endswith(".py") or os.path.isfile(first):
-            cmd = [sys.executable] + command
+            cmd = [str(bin_dir / "python")] + command
         else:
-            cmd = [sys.executable, "-m"] + command
+            cmd = [str(bin_dir / "python"), "-m"] + command
 
         result = subprocess.run(cmd, env=env)
         return result.returncode
     except KeyboardInterrupt:
         return 130
     finally:
-        import shutil
-
-        shutil.rmtree(tmpdir, ignore_errors=True)
-
-
-def run_command(args: argparse.Namespace) -> int:
-    """Run command with sandboxing."""
-    command = list(args.command)
-    review = args.review
-    force = args.force
-
-    if "--review" in command:
-        command.remove("--review")
-        review = True
-    if "--force" in command:
-        command.remove("--force")
-        force = True
-
-    template = _select_template(review, force)
-    return _run_with_hook(command, template)
+        cleanup_wrapper_bin_dir(bin_dir)
 
 
 def eval_command(args: argparse.Namespace) -> int:
-    """Execute Python code string with sandboxing."""
-    template = _select_template(args.review, args.force)
-    return _run_with_hook_code(args.code, template)
+    """Execute Python code string with sandboxing using wrapper."""
+    from malwi_box.wrapper import cleanup_wrapper_bin_dir, setup_wrapper_bin_dir
+
+    mode = _get_mode(args)
+    config_path = getattr(args, "config_path", None)
+
+    bin_dir, wrapper_env = setup_wrapper_bin_dir(mode, config_path)
+    if bin_dir is None:
+        print("Error: Wrapper not available", file=sys.stderr)
+        return 1
+
+    try:
+        env = os.environ.copy()
+        env.update(wrapper_env)
+        env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+
+        cmd = [str(bin_dir / "python"), "-c", args.code]
+        result = subprocess.run(cmd, env=env)
+        return result.returncode
+    except KeyboardInterrupt:
+        return 130
+    finally:
+        cleanup_wrapper_bin_dir(bin_dir)
 
 
 def _build_pip_args(args: argparse.Namespace) -> list[str] | None:
@@ -129,26 +106,40 @@ def _build_pip_args(args: argparse.Namespace) -> list[str] | None:
 
 
 def install_command(args: argparse.Namespace) -> int:
-    """Install package(s) with sandboxing using pip's Python API."""
+    """Install package(s) with sandboxing using wrapper injection.
+
+    Sets up a temporary bin directory with malwi_python as python/python3,
+    prepends it to PATH, and runs pip. All Python subprocesses will use
+    the wrapped interpreter with the audit hook.
+    """
     pip_args = _build_pip_args(args)
     if pip_args is None:
         return 1
 
-    from pip._internal.cli.main import main as pip_main
+    from malwi_box.wrapper import cleanup_wrapper_bin_dir, setup_wrapper_bin_dir
 
-    from malwi_box.engine import BoxEngine
-    from malwi_box.hook import setup_force_hook, setup_review_hook, setup_run_hook
+    mode = _get_mode(args)
+    config_path = getattr(args, "config_path", None)
 
-    engine = BoxEngine()
+    bin_dir, wrapper_env = setup_wrapper_bin_dir(mode, config_path)
+    if bin_dir is None:
+        print("Error: Wrapper not available", file=sys.stderr)
+        return 1
 
-    if args.review:
-        setup_review_hook(engine)
-    elif args.force:
-        setup_force_hook(engine)
-    else:
-        setup_run_hook(engine)
+    try:
+        # Prepare environment with wrapper in PATH
+        env = os.environ.copy()
+        env.update(wrapper_env)
+        env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
 
-    return pip_main(pip_args)
+        # Run pip using our wrapped python
+        cmd = [str(bin_dir / "python"), "-m", "pip"] + pip_args
+        result = subprocess.run(cmd, env=env)
+        return result.returncode
+    except KeyboardInterrupt:
+        return 130
+    finally:
+        cleanup_wrapper_bin_dir(bin_dir)
 
 
 def config_create_command(args: argparse.Namespace) -> int:
@@ -187,7 +178,7 @@ def main() -> int:
     run_parser = subparsers.add_parser(
         "run",
         help="Run a Python script or module with sandboxing",
-        usage="%(prog)s <script.py|module> [args...] [--review]",
+        usage="%(prog)s <script.py|module> [args...] [--review] [--force] [--config PATH]",
     )
     run_parser.add_argument(
         "command",
@@ -204,11 +195,16 @@ def main() -> int:
         action="store_true",
         help="Log violations without blocking",
     )
+    run_parser.add_argument(
+        "--config",
+        dest="config_path",
+        help="Path to config file",
+    )
 
     eval_parser = subparsers.add_parser(
         "eval",
         help="Execute Python code string with sandboxing",
-        usage="%(prog)s <code> [--review] [--force]",
+        usage="%(prog)s <code> [--review] [--force] [--config PATH]",
     )
     eval_parser.add_argument(
         "code",
@@ -224,11 +220,16 @@ def main() -> int:
         action="store_true",
         help="Log violations without blocking",
     )
+    eval_parser.add_argument(
+        "--config",
+        dest="config_path",
+        help="Path to config file",
+    )
 
     install_parser = subparsers.add_parser(
         "install",
         help="Install Python packages with sandboxing",
-        usage="%(prog)s <package> [--version VER] | -r <file> [--review] [--force]",
+        usage="%(prog)s <package> [--version VER] | -r <file> [--review] [--force] [--config PATH]",
     )
     install_parser.add_argument(
         "package",
@@ -255,6 +256,11 @@ def main() -> int:
         "--force",
         action="store_true",
         help="Log violations without blocking",
+    )
+    install_parser.add_argument(
+        "--config",
+        dest="config_path",
+        help="Path to config file",
     )
 
     config_parser = subparsers.add_parser("config", help="Configuration management")
