@@ -137,12 +137,14 @@ def install_command(args: argparse.Namespace) -> int:
     from pip._internal.cli.main import main as pip_main
 
     from malwi_box.engine import BoxEngine
-    from malwi_box.hook import setup_review_hook, setup_run_hook
+    from malwi_box.hook import setup_force_hook, setup_review_hook, setup_run_hook
 
     engine = BoxEngine()
 
     if args.review:
         setup_review_hook(engine)
+    elif args.force:
+        setup_force_hook(engine)
     else:
         setup_run_hook(engine)
 
@@ -226,7 +228,7 @@ def main() -> int:
     install_parser = subparsers.add_parser(
         "install",
         help="Install Python packages with sandboxing",
-        usage="%(prog)s <package> [--version VER] | -r <file> [--review]",
+        usage="%(prog)s <package> [--version VER] | -r <file> [--review] [--force]",
     )
     install_parser.add_argument(
         "package",
@@ -248,6 +250,11 @@ def main() -> int:
         "--review",
         action="store_true",
         help="Enable interactive approval mode",
+    )
+    install_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Log violations without blocking",
     )
 
     config_parser = subparsers.add_parser("config", help="Configuration management")
