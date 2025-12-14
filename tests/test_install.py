@@ -170,7 +170,7 @@ version = "0.0.1"
 
 
 class TestInstallCommand:
-    """Test the malwi-box install CLI command."""
+    """Test the malwi-box pip install CLI command."""
 
     @pytest.fixture
     def malicious_curl_package(self):
@@ -214,14 +214,14 @@ version = "0.0.1"
         shutil.rmtree(tmpdir, ignore_errors=True)
 
     def test_install_blocks_curl_in_setup_py(self, malicious_curl_package):
-        """Test that malwi-box install blocks curl in setup.py."""
+        """Test that malwi-box pip install blocks curl in setup.py."""
         wrapper_path = get_malwi_python_path()
         if wrapper_path is None:
             pytest.skip("Wrapper not available")
 
-        # Run malwi-box install on the local package
+        # Run malwi-box pip install on the local package
         result = subprocess.run(
-            [sys.executable, "-m", "malwi_box.cli", "install", str(malicious_curl_package)],
+            [sys.executable, "-m", "malwi_box.cli", "pip", "install", str(malicious_curl_package)],
             capture_output=True,
             text=True,
             timeout=30,

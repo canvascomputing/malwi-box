@@ -165,7 +165,7 @@ def config_create_command(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Python audit hook sandbox",
-        usage="%(prog)s {run,eval,install,config} ...",
+        usage="%(prog)s {run,eval,pip,config} ...",
     )
     parser.add_argument(
         "--version",
@@ -226,38 +226,42 @@ def main() -> int:
         help="Path to config file",
     )
 
-    install_parser = subparsers.add_parser(
+    # pip subcommand with install sub-subcommand
+    pip_parser = subparsers.add_parser("pip", help="Pip commands with sandboxing")
+    pip_subparsers = pip_parser.add_subparsers(dest="pip_subcommand", required=True)
+
+    pip_install_parser = pip_subparsers.add_parser(
         "install",
         help="Install Python packages with sandboxing",
         usage="%(prog)s <package> [--version VER] | -r <file> [--review] [--force] [--config PATH]",
     )
-    install_parser.add_argument(
+    pip_install_parser.add_argument(
         "package",
         nargs="?",
         help="Package name to install",
     )
-    install_parser.add_argument(
+    pip_install_parser.add_argument(
         "--version",
         dest="pkg_version",
         help="Package version to install",
     )
-    install_parser.add_argument(
+    pip_install_parser.add_argument(
         "-r",
         "--requirements",
         dest="requirements",
         help="Install from requirements file",
     )
-    install_parser.add_argument(
+    pip_install_parser.add_argument(
         "--review",
         action="store_true",
         help="Enable interactive approval mode",
     )
-    install_parser.add_argument(
+    pip_install_parser.add_argument(
         "--force",
         action="store_true",
         help="Log violations without blocking",
     )
-    install_parser.add_argument(
+    pip_install_parser.add_argument(
         "--config",
         dest="config_path",
         help="Path to config file",
@@ -283,7 +287,7 @@ def main() -> int:
         return run_command(args)
     elif args.subcommand == "eval":
         return eval_command(args)
-    elif args.subcommand == "install":
+    elif args.subcommand == "pip" and args.pip_subcommand == "install":
         return install_command(args)
     elif args.subcommand == "config" and args.config_subcommand == "create":
         return config_create_command(args)

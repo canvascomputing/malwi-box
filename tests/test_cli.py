@@ -17,7 +17,7 @@ class TestCLICommands:
         assert result.returncode == 0
         assert "run" in result.stdout
         assert "eval" in result.stdout
-        assert "install" in result.stdout
+        assert "pip" in result.stdout
 
     def test_run_help(self):
         """Test run subcommand help."""
@@ -29,10 +29,10 @@ class TestCLICommands:
         assert result.returncode == 0
         assert "--review" in result.stdout
 
-    def test_install_help(self):
-        """Test install subcommand help."""
+    def test_pip_install_help(self):
+        """Test pip install subcommand help."""
         result = subprocess.run(
-            [sys.executable, "-m", "malwi_box.cli", "install", "--help"],
+            [sys.executable, "-m", "malwi_box.cli", "pip", "install", "--help"],
             capture_output=True,
             text=True,
         )
@@ -42,10 +42,10 @@ class TestCLICommands:
         assert "-r" in result.stdout
         assert "--requirements" in result.stdout
 
-    def test_install_without_args_errors(self):
-        """Test that install without package or requirements errors."""
+    def test_pip_install_without_args_errors(self):
+        """Test that pip install without package or requirements errors."""
         result = subprocess.run(
-            [sys.executable, "-m", "malwi_box.cli", "install"],
+            [sys.executable, "-m", "malwi_box.cli", "pip", "install"],
             capture_output=True,
             text=True,
         )
