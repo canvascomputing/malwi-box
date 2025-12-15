@@ -4,11 +4,9 @@ FROM python:${PYTHON_VERSION}-slim
 WORKDIR /app
 
 # Install build dependencies for C++ extension and git (needed for tests)
-# curl is needed for some tests that verify blocking of curl commands
 RUN apt-get update && apt-get install -y \
     build-essential \
     git \
-    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv

