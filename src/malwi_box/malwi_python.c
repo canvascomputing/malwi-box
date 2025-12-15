@@ -147,6 +147,18 @@ int main(int argc, char *argv[]) {
     PyConfig config;
     PyConfig_InitPythonConfig(&config);
 
+    // Set Python home from PYTHONHOME env or from executable path
+    const char *python_home = getenv("PYTHONHOME");
+    if (python_home && python_home[0]) {
+        size_t len = strlen(python_home) + 1;
+        wchar_t *whome = (wchar_t *)malloc(len * sizeof(wchar_t));
+        if (whome) {
+            mbstowcs(whome, python_home, len);
+            PyConfig_SetString(&config, &config.home, whome);
+            free(whome);
+        }
+    }
+
     // Set program name and arguments
     PyStatus status = PyConfig_SetArgv(&config, argc, wargv);
     if (PyStatus_Exception(status)) {

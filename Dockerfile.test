@@ -4,9 +4,11 @@ FROM python:${PYTHON_VERSION}-slim
 WORKDIR /app
 
 # Install build dependencies for C++ extension and git (needed for tests)
+# curl is needed for some tests that verify blocking of curl commands
 RUN apt-get update && apt-get install -y \
     build-essential \
     git \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv
@@ -17,6 +19,15 @@ COPY . .
 
 # Install dependencies and build
 RUN uv sync --dev
+
+# Build the C extension and malwi_python wrapper for this platform
+# setuptools is needed for setup.py but not a runtime dependency
+RUN uv run pip install setuptools && uv run python setup.py build_ext --inplace
+
+# Also install malwi_box in the system Python
+# This is needed because malwi_python wrapper links to system Python,
+# so it needs malwi_box available in system site-packages
+RUN pip install -e .
 
 # Run tests
 CMD ["uv", "run", "pytest", "tests/", "-v"]

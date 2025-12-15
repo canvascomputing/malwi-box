@@ -25,6 +25,7 @@ class CustomBuildExt(build_ext):
 
     def build_malwi_python(self):
         """Build the malwi_python embedded interpreter wrapper."""
+        import shutil
         import subprocess
         import sysconfig
 
@@ -36,9 +37,13 @@ class CustomBuildExt(build_ext):
         os.makedirs(out_dir, exist_ok=True)
         out_file = os.path.join(out_dir, "malwi_python")
 
+        # Also determine inplace location for --inplace builds
+        inplace_file = "src/malwi_box/malwi_python"
+
         # Get Python build flags using python3-config
-        # Try to find python3-config in the same directory as the Python executable
-        python_dir = os.path.dirname(sys.executable)
+        # Resolve symlinks to find the real Python installation directory
+        real_executable = os.path.realpath(sys.executable)
+        python_dir = os.path.dirname(real_executable)
         python_config = os.path.join(python_dir, "python3-config")
         if not os.path.exists(python_config):
             python_config = "python3-config"  # Fall back to PATH
@@ -68,7 +73,10 @@ class CustomBuildExt(build_ext):
         else:
             rpath_flag = f"-Wl,-rpath,{lib_dir}"
 
-        cmd = f'{compiler} {cflags} -o "{out_file}" "{src}" {ldflags} {rpath_flag}'
+        # Add -L flag to specify library search path (python3-config may not include it)
+        lib_flag = f"-L{lib_dir}"
+
+        cmd = f'{compiler} {cflags} -o "{out_file}" "{src}" {lib_flag} {ldflags} {rpath_flag}'
 
         print(f"Building malwi_python: {out_file}")
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
@@ -76,6 +84,10 @@ class CustomBuildExt(build_ext):
             print(f"Warning: Failed to build malwi_python: {result.stderr}")
         else:
             print(f"Built malwi_python: {out_file}")
+            # Copy to inplace location (for editable installs and --inplace)
+            if self.inplace or out_file != inplace_file:
+                shutil.copy2(out_file, inplace_file)
+                print(f"Copied malwi_python to: {inplace_file}")
 
 
 setup(

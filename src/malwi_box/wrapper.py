@@ -1,8 +1,30 @@
 """Python wrapper helpers for subprocess hook injection."""
 
+import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
+
+
+def get_python_home() -> str | None:
+    """Get the Python home directory.
+
+    Returns the base directory of the Python installation, which contains
+    the lib/pythonX.Y directory with the standard library.
+
+    Returns:
+        Path to Python home or None if not determinable.
+    """
+    # Resolve symlinks to find the actual Python installation
+    real_executable = os.path.realpath(sys.executable)
+    # Python home is typically the parent of the bin directory
+    bin_dir = os.path.dirname(real_executable)
+    python_home = os.path.dirname(bin_dir)
+    # Verify it looks like a valid Python home
+    if os.path.isdir(os.path.join(python_home, "lib")):
+        return python_home
+    return None
 
 
 def get_malwi_python_path() -> Path | None:
@@ -37,6 +59,24 @@ def get_wrapper_env(
 
     if config_path:
         env["MALWI_BOX_CONFIG"] = config_path
+
+    # Set PYTHONHOME so the embedded interpreter can find the standard library
+    python_home = get_python_home()
+    if python_home:
+        env["PYTHONHOME"] = python_home
+
+    # Set PYTHONPATH so the embedded interpreter can find malwi_box and other packages
+    # This is needed because PYTHONHOME points to the base installation, not the venv
+    pythonpath_parts = []
+    for path in sys.path:
+        # Include site-packages and editable installs (src directories)
+        if "site-packages" in path or path.endswith("/src"):
+            pythonpath_parts.append(path)
+    if pythonpath_parts:
+        existing = os.environ.get("PYTHONPATH", "")
+        if existing:
+            pythonpath_parts.append(existing)
+        env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
 
     return env
 

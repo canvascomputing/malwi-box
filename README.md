@@ -97,15 +97,32 @@ malwi-box eval --force "import os; os.system('id')"
 malwi-box eval --review "open('/etc/passwd').read()"
 ```
 
-### install
+### pip install
 
 Install pip packages with sandboxing. Most malware packages perform malicious activities at install-time.
 
 ```bash
-malwi-box install package
-malwi-box install package --version 1.2.3
-malwi-box install -r requirements.txt
-malwi-box install --review package # approve/deny each operation
+malwi-box pip install package
+malwi-box pip install package --version 1.2.3
+malwi-box pip install -r requirements.txt
+malwi-box pip install --review package # approve/deny each operation
+```
+
+### venv
+
+Create a sandboxed virtual environment. The venv's Python binaries are replaced with the malwi-box wrapper, so all code executed in the venv is automatically sandboxed.
+
+```bash
+malwi-box venv                    # creates .venv
+malwi-box venv --path myenv       # custom path
+malwi-box venv --config FILE      # use custom config
+```
+
+After creation, activate and use normally:
+```bash
+source .venv/bin/activate
+python script.py                  # sandboxed automatically
+pip install requests              # install scripts are sandboxed
 ```
 
 ### config
@@ -229,7 +246,7 @@ All `allow_*` attributes consistently block when empty. Use variables to documen
 | `allow_ips` | Block all | `$LOCALHOST` |
 | `allow_http_urls` | Block all | `$PYPI_DOMAINS/*` |
 | `allow_http_methods` | Block all | `$ALL_HTTP_METHODS` |
-| `allow_executables` | Block all | `$OS_SYSTEM` |
+| `allow_executables` | Block all | (none) |
 | `allow_shell_commands` | Block all | (none) |
 | `allow_env_var_reads` | Block all | `$SAFE_ENV_VARS` |
 

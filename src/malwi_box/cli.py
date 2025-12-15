@@ -165,7 +165,7 @@ def config_create_command(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Python audit hook sandbox",
-        usage="%(prog)s {run,eval,pip,config} ...",
+        usage="%(prog)s {run,eval,pip,venv,config} ...",
     )
     parser.add_argument(
         "--version",
@@ -267,6 +267,22 @@ def main() -> int:
         help="Path to config file",
     )
 
+    # venv subcommand
+    venv_parser = subparsers.add_parser(
+        "venv",
+        help="Create a sandboxed virtual environment",
+    )
+    venv_parser.add_argument(
+        "--path",
+        default=".venv",
+        help="Path for the venv (default: .venv)",
+    )
+    venv_parser.add_argument(
+        "--config",
+        dest="config_path",
+        help="Path to config file",
+    )
+
     config_parser = subparsers.add_parser("config", help="Configuration management")
     config_subparsers = config_parser.add_subparsers(
         dest="config_subcommand", required=True
@@ -289,6 +305,15 @@ def main() -> int:
         return eval_command(args)
     elif args.subcommand == "pip" and args.pip_subcommand == "install":
         return install_command(args)
+    elif args.subcommand == "venv":
+        from pathlib import Path
+
+        from malwi_box.venv import create_sandboxed_venv
+
+        return create_sandboxed_venv(
+            Path(args.path),
+            getattr(args, "config_path", None),
+        )
     elif args.subcommand == "config" and args.config_subcommand == "create":
         return config_create_command(args)
 

@@ -43,7 +43,7 @@ print("FAIL: should not reach here")
 """
         exit_code, stdout, stderr = run_sandboxed_code(code)
 
-        assert exit_code == 77, f"Expected exit code 77, got {exit_code}"
+        assert exit_code == 78, f"Expected exit code 78, got {exit_code}"
         assert "BLOCKED: sys.addaudithook" in stderr
         assert "FAIL" not in stdout
 
@@ -56,7 +56,7 @@ print("FAIL: should not reach here")
 """
         exit_code, stdout, stderr = run_sandboxed_code(code)
 
-        assert exit_code == 77, f"Expected exit code 77, got {exit_code}"
+        assert exit_code == 78, f"Expected exit code 78, got {exit_code}"
         assert "BLOCKED: sys.setprofile" in stderr
         assert "FAIL" not in stdout
 
@@ -69,7 +69,7 @@ print("FAIL: should not reach here")
 """
         exit_code, stdout, stderr = run_sandboxed_code(code)
 
-        assert exit_code == 77, f"Expected exit code 77, got {exit_code}"
+        assert exit_code == 78, f"Expected exit code 78, got {exit_code}"
         assert "BLOCKED: sys.settrace" in stderr
         assert "FAIL" not in stdout
 

@@ -710,8 +710,7 @@ class TestExecutableControl:
 
         saved_config = toml.loads(config_path.read_text())
         executables = saved_config.get("allow_executables", [])
-        # Default has $OS_SYSTEM, plus our new entry
-        assert "$OS_SYSTEM" in executables
+        # Our new entry should be added
         assert "nonexistent_binary_xyz" in executables
 
 
@@ -946,9 +945,8 @@ class TestDecisionRecording:
         saved_config = toml.loads(config_path.read_text())
         # Command is saved exactly (user can manually edit to use glob patterns)
         assert "git status" in saved_config.get("allow_shell_commands", [])
-        # Executable should be saved with hash, along with default $OS_SYSTEM
+        # Executable should be saved with hash
         executables = saved_config.get("allow_executables", [])
-        assert "$OS_SYSTEM" in executables
         # Find the git entry (dict with path and hash)
         git_entries = [e for e in executables if isinstance(e, dict) and e.get("path") == "git"]
         assert len(git_entries) == 1

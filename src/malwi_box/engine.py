@@ -339,8 +339,8 @@ class BoxEngine:
             "allow_ips": ["$LOCALHOST"],
             "allow_http_urls": ["$PYPI_DOMAINS/*"],
             "allow_http_methods": ["$ALL_HTTP_METHODS"],
-            # Execution - OS system libraries only
-            "allow_executables": ["$OS_SYSTEM"],
+            # Execution - none by default
+            "allow_executables": [],
             "allow_shell_commands": [],
             # Environment
             "allow_env_var_reads": ["$SAFE_ENV_VARS"],

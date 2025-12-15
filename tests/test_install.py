@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from malwi_box.wrapper import get_malwi_python_path, setup_wrapper_bin_dir, cleanup_wrapper_bin_dir
+from malwi_box.wrapper import get_malwi_python_path, get_wrapper_env, setup_wrapper_bin_dir, cleanup_wrapper_bin_dir
 
 
 class TestWrapperAvailability:
@@ -39,46 +39,55 @@ class TestWrapperExecution:
             pytest.skip("Wrapper not available")
         return path
 
-    def test_wrapper_runs_python_code(self, wrapper_path):
+    @pytest.fixture
+    def wrapper_env(self):
+        """Get base environment for wrapper (includes PYTHONHOME, PYTHONPATH)."""
+        # Use get_wrapper_env to get PYTHONHOME and PYTHONPATH, but without hook enabled
+        env = get_wrapper_env(mode="run")
+        env["MALWI_BOX_ENABLED"] = "0"  # Disable by default
+        return {**os.environ, **env}
+
+    def test_wrapper_runs_python_code(self, wrapper_path, wrapper_env):
         """Test that wrapper can execute Python code."""
         result = subprocess.run(
             [str(wrapper_path), "-c", "print('hello')"],
             capture_output=True,
             text=True,
+            env=wrapper_env,
         )
         assert result.returncode == 0
         assert "hello" in result.stdout
 
-    def test_wrapper_without_hook_allows_all(self, wrapper_path):
+    def test_wrapper_without_hook_allows_all(self, wrapper_path, wrapper_env):
         """Test that wrapper without MALWI_BOX_ENABLED allows everything."""
         result = subprocess.run(
             [str(wrapper_path), "-c", "import socket; s = socket.socket()"],
             capture_output=True,
             text=True,
-            env={**os.environ, "MALWI_BOX_ENABLED": "0"},
+            env={**wrapper_env, "MALWI_BOX_ENABLED": "0"},
         )
         assert result.returncode == 0
 
-    def test_wrapper_with_hook_blocks_violations(self, wrapper_path):
+    def test_wrapper_with_hook_blocks_violations(self, wrapper_path, wrapper_env):
         """Test that wrapper with hook enabled blocks violations."""
         result = subprocess.run(
             [str(wrapper_path), "-c",
              "import socket; s = socket.socket(); s.connect(('evil.com', 80))"],
             capture_output=True,
             text=True,
-            env={**os.environ, "MALWI_BOX_ENABLED": "1", "MALWI_BOX_MODE": "run"},
+            env={**wrapper_env, "MALWI_BOX_ENABLED": "1", "MALWI_BOX_MODE": "run"},
         )
         # Exit code 78 means blocked by malwi-box
         assert result.returncode == 78
         assert "Blocked" in result.stderr
 
-    def test_wrapper_force_mode_logs_but_allows(self, wrapper_path):
+    def test_wrapper_force_mode_logs_but_allows(self, wrapper_path, wrapper_env):
         """Test that force mode logs violations but doesn't block."""
         result = subprocess.run(
             [str(wrapper_path), "-c", "print('allowed')"],
             capture_output=True,
             text=True,
-            env={**os.environ, "MALWI_BOX_ENABLED": "1", "MALWI_BOX_MODE": "force"},
+            env={**wrapper_env, "MALWI_BOX_ENABLED": "1", "MALWI_BOX_MODE": "force"},
         )
         assert result.returncode == 0
         assert "allowed" in result.stdout
@@ -136,17 +145,16 @@ version = "0.0.1"
         if wrapper_path is None:
             pytest.skip("Wrapper not available")
 
+        # Get wrapper env (PYTHONHOME, PYTHONPATH) and enable hook
+        wrapper_env = get_wrapper_env(mode="run")
+
         # Run setup.py with the wrapper and hook enabled
         result = subprocess.run(
             [str(wrapper_path), str(malicious_package / "setup.py")],
             capture_output=True,
             text=True,
             cwd=str(malicious_package),
-            env={
-                **os.environ,
-                "MALWI_BOX_ENABLED": "1",
-                "MALWI_BOX_MODE": "run",
-            },
+            env={**os.environ, **wrapper_env},
         )
 
         # Should exit with 78 (blocked) because socket.connect to evil.com is blocked
@@ -226,6 +234,10 @@ version = "0.0.1"
             text=True,
             timeout=30,
         )
+
+        # Skip if environment is externally managed (uv, pyenv, etc.)
+        if "externally-managed-environment" in result.stderr:
+            pytest.skip("Cannot test pip install in externally-managed environment")
 
         # The install should fail with exit code 78 (blocked)
         # because setup.py tries to run curl

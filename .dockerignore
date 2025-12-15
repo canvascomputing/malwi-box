@@ -1,0 +1,27 @@
+# Exclude build artifacts (they're platform-specific)
+*.so
+*.pyc
+__pycache__/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Exclude the compiled wrapper (needs to be rebuilt for Linux)
+src/malwi_box/malwi_python
+
+# Exclude venv
+.venv/
+
+# Exclude git
+.git/
+
+# Exclude IDE
+.idea/
+.vscode/
+*.swp
+
+# Exclude test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
