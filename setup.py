@@ -17,15 +17,21 @@ ext_module = Extension(
 
 
 class CustomBuildExt(build_ext):
-    """Custom build_ext that also builds the malwi_python wrapper."""
+    """Custom build_ext that also builds the malwi_python wrapper for development.
+
+    Note: The malwi_python binary is NOT included in wheels because it's
+    platform/Python-specific. Instead, it's compiled during `malwi-box venv`
+    for the target Python. This only builds for --inplace (development) builds.
+    """
 
     def run(self):
         super().run()
-        self.build_malwi_python()
+        # Only build malwi_python for inplace/development builds
+        if self.inplace:
+            self.build_malwi_python()
 
     def build_malwi_python(self):
-        """Build the malwi_python embedded interpreter wrapper."""
-        import shutil
+        """Build the malwi_python embedded interpreter wrapper for development."""
         import subprocess
         import sysconfig
 
@@ -33,12 +39,7 @@ class CustomBuildExt(build_ext):
         if not os.path.exists(src):
             return
 
-        out_dir = os.path.join(self.build_lib, "malwi_box")
-        os.makedirs(out_dir, exist_ok=True)
-        out_file = os.path.join(out_dir, "malwi_python")
-
-        # Also determine inplace location for --inplace builds
-        inplace_file = "src/malwi_box/malwi_python"
+        out_file = "src/malwi_box/malwi_python"
 
         # Get Python build flags using python3-config
         # Resolve symlinks to find the real Python installation directory
@@ -73,10 +74,7 @@ class CustomBuildExt(build_ext):
         compiler = "clang" if sys.platform == "darwin" else "gcc"
 
         # Build command with rpath for finding libpython at runtime
-        if sys.platform == "darwin":
-            rpath_flag = f"-Wl,-rpath,{lib_dir}"
-        else:
-            rpath_flag = f"-Wl,-rpath,{lib_dir}"
+        rpath_flag = f"-Wl,-rpath,{lib_dir}"
 
         # Add -L flag to specify library search path (python3-config may not include it)
         lib_flag = f"-L{lib_dir}"
@@ -92,10 +90,6 @@ class CustomBuildExt(build_ext):
             print(f"Warning: Failed to build malwi_python: {result.stderr}")
         else:
             print(f"Built malwi_python: {out_file}")
-            # Copy to inplace location (for editable installs and --inplace)
-            if self.inplace or out_file != inplace_file:
-                shutil.copy2(out_file, inplace_file)
-                print(f"Copied malwi_python to: {inplace_file}")
 
 
 setup(

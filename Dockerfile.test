@@ -3,9 +3,10 @@ FROM python:${PYTHON_VERSION}-slim
 
 WORKDIR /app
 
-# Install build dependencies for C++ extension and git (needed for tests)
+# Install build dependencies for C++ extension, Python embedding, and git (needed for tests)
 RUN apt-get update && apt-get install -y \
     build-essential \
+    python3-dev \
     git \
     && rm -rf /var/lib/apt/lists/*
 

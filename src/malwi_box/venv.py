@@ -1,7 +1,10 @@
 """Injection commands for permanent Python wrapper installation."""
 
+import os
 import shutil
+import subprocess
 import sys
+import sysconfig
 import venv
 from pathlib import Path
 
@@ -9,6 +12,117 @@ from malwi_box.wrapper import get_malwi_python_path
 
 
 PYTHON_BINARY_NAMES = ["python", "python3"]
+
+# Error message shown when compilation fails
+COMPILE_ERROR_MSG = """\
+Error: Failed to compile malwi_python wrapper.
+
+Please ensure you have a C compiler and Python development headers installed:
+  macOS:         xcode-select --install
+  Debian/Ubuntu: sudo apt install build-essential python3-dev
+  Fedora:        sudo dnf install gcc python3-devel
+  Arch:          sudo pacman -S base-devel
+
+Compiler output:
+{error}
+"""
+
+
+def get_malwi_python_source() -> Path | None:
+    """Get path to malwi_python.c source file."""
+    # Check in the package directory
+    package_dir = Path(__file__).parent
+    src = package_dir / "malwi_python.c"
+    if src.exists():
+        return src
+    return None
+
+
+def build_malwi_python(
+    output_path: Path,
+    python_executable: Path | str,
+    default_enabled: bool = True,
+) -> tuple[bool, str | None]:
+    """Build the malwi_python binary for a specific Python installation.
+
+    Args:
+        output_path: Where to write the compiled binary.
+        python_executable: Path to the Python executable to build for.
+        default_enabled: If True, sandbox is enabled by default (use MALWI_BOX_ENABLED=0 to disable).
+                        If False, sandbox is disabled by default (use MALWI_BOX_ENABLED=1 to enable).
+
+    Returns:
+        Tuple of (success, error_message). error_message is None on success.
+    """
+    src = get_malwi_python_source()
+    if src is None:
+        return False, "malwi_python.c source file not found in package"
+
+    python_executable = Path(python_executable).resolve()
+    python_dir = python_executable.parent
+
+    # Find python3-config next to the Python executable
+    python_config = python_dir / "python3-config"
+    if not python_config.exists():
+        # Try without the '3'
+        python_config = python_dir / "python-config"
+    if not python_config.exists():
+        # Fall back to PATH
+        python_config = Path("python3-config")
+
+    # Get compiler flags
+    try:
+        cflags = subprocess.check_output(
+            [str(python_config), "--cflags"], text=True, stderr=subprocess.STDOUT
+        ).strip()
+    except subprocess.CalledProcessError as e:
+        return False, f"python3-config --cflags failed: {e.output}"
+    except FileNotFoundError:
+        return False, f"python3-config not found (tried {python_config})"
+
+    try:
+        ldflags = subprocess.check_output(
+            [str(python_config), "--ldflags", "--embed"], text=True, stderr=subprocess.STDOUT
+        ).strip()
+    except subprocess.CalledProcessError as e:
+        return False, f"python3-config --ldflags failed: {e.output}"
+
+    # Get library directory for rpath - run Python to get sysconfig values
+    try:
+        result = subprocess.run(
+            [str(python_executable), "-c",
+             "import sysconfig; print(sysconfig.get_config_var('LIBDIR') or ''); print(sysconfig.get_config_var('prefix') or '')"],
+            capture_output=True, text=True
+        )
+        lines = result.stdout.strip().split('\n')
+        lib_dir = lines[0] if lines else ""
+        python_home = lines[1] if len(lines) > 1 else ""
+    except Exception:
+        lib_dir = ""
+        python_home = ""
+
+    if not lib_dir:
+        lib_dir = str(python_dir.parent / "lib")
+    if not python_home:
+        python_home = str(python_dir.parent)
+
+    compiler = "clang" if sys.platform == "darwin" else "gcc"
+
+    # Build command with rpath for finding libpython at runtime
+    rpath_flag = f"-Wl,-rpath,{lib_dir}"
+    lib_flag = f"-L{lib_dir}"
+    python_home_define = f'-DDEFAULT_PYTHON_HOME=\\"{python_home}\\"'
+    enabled_define = f"-DDEFAULT_ENABLED={1 if default_enabled else 0}"
+
+    cmd = f'{compiler} {cflags} {python_home_define} {enabled_define} -o "{output_path}" "{src}" {lib_flag} {ldflags} {rpath_flag}'
+
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    if result.returncode != 0:
+        error = result.stderr or result.stdout or "Unknown compilation error"
+        return False, error
+
+    output_path.chmod(0o755)
+    return True, None
 
 
 def get_python_bin_dir() -> Path:
@@ -136,11 +250,10 @@ def create_sandboxed_venv(
 
     Returns exit code (0 = success, non-zero = error).
     """
-    import subprocess
-
-    wrapper_path = get_malwi_python_path()
-    if wrapper_path is None:
-        print("Error: malwi_python wrapper not found", file=sys.stderr)
+    # Check that source file exists before doing anything
+    src = get_malwi_python_source()
+    if src is None:
+        print("Error: malwi_python.c source file not found in package", file=sys.stderr)
         return 1
 
     venv_path = Path(venv_path).resolve()
@@ -159,9 +272,28 @@ def create_sandboxed_venv(
         print(f"Error creating venv: {e}", file=sys.stderr)
         return 1
 
-    # Step 2: Replace Python binaries with malwi_python wrapper
-    # The binary auto-detects PYTHONHOME and adds its directory to sys.path
     bin_dir = venv_path / "bin"
+
+    # Step 2: Find the original Python that the venv was created from
+    # The venv's python is a symlink to the base Python
+    venv_python = bin_dir / "python"
+    if venv_python.is_symlink():
+        base_python = venv_python.resolve()
+    else:
+        # Fall back to current Python
+        base_python = Path(sys.executable).resolve()
+
+    # Step 3: Compile malwi_python wrapper for the base Python
+    print(f"Compiling malwi_python wrapper for {base_python}...")
+    wrapper_path = bin_dir / "malwi_python_wrapper"
+    success, error = build_malwi_python(wrapper_path, base_python)
+    if not success:
+        # Clean up the venv since we failed
+        shutil.rmtree(venv_path, ignore_errors=True)
+        print(COMPILE_ERROR_MSG.format(error=error), file=sys.stderr)
+        return 1
+
+    # Step 4: Replace Python binaries with the compiled wrapper
     binaries = get_python_binaries(bin_dir)
     injected = []
     errors = []
@@ -173,7 +305,7 @@ def create_sandboxed_venv(
             # Rename original to .orig
             shutil.move(str(binary), str(backup))
 
-            # Copy malwi_python wrapper directly
+            # Copy the compiled wrapper
             shutil.copy2(str(wrapper_path), str(binary))
             binary.chmod(0o755)
 
@@ -181,13 +313,16 @@ def create_sandboxed_venv(
         except Exception as e:
             errors.append((binary, str(e)))
 
+    # Remove the temporary wrapper file
+    wrapper_path.unlink(missing_ok=True)
+
     if errors:
         print(f"\nErrors ({len(errors)}):", file=sys.stderr)
         for b, err in errors:
             print(f"  {b.name}: {err}", file=sys.stderr)
         return 1
 
-    # Step 3: Install pip using the wrapped Python (which is NOT sandboxed yet)
+    # Step 5: Install pip using the wrapped Python (which is NOT sandboxed yet)
     # The wrapper only activates when MALWI_BOX_ENABLED=1
     python_bin = bin_dir / "python"
     try:
@@ -201,7 +336,7 @@ def create_sandboxed_venv(
     except Exception as e:
         print(f"Warning: Failed to install pip: {e}", file=sys.stderr)
 
-    # Step 4: Install malwi-box package (required for the hook to function)
+    # Step 6: Install malwi-box package (required for the hook to function)
     try:
         result = subprocess.run(
             [str(python_bin), "-m", "pip", "install", "malwi-box", "-q"],
@@ -220,7 +355,9 @@ def create_sandboxed_venv(
 
     print(f"\nTo activate:")
     print(f"  source {venv_path}/bin/activate")
-    print(f"\nTo enable sandboxing:")
-    print(f"  export MALWI_BOX_ENABLED=1")
+    print(f"\nTo run code directly:")
+    print(f"  {venv_path}/bin/python -c \"print('hello')\"")
+    print(f"\nSandboxing is enabled by default.")
+    print(f"To disable: export MALWI_BOX_ENABLED=0")
 
     return 0
