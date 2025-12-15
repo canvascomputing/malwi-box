@@ -277,11 +277,6 @@ def main() -> int:
         default=".venv",
         help="Path for the venv (default: .venv)",
     )
-    venv_parser.add_argument(
-        "--config",
-        dest="config_path",
-        help="Path to config file",
-    )
 
     config_parser = subparsers.add_parser("config", help="Configuration management")
     config_subparsers = config_parser.add_subparsers(
@@ -310,10 +305,7 @@ def main() -> int:
 
         from malwi_box.venv import create_sandboxed_venv
 
-        return create_sandboxed_venv(
-            Path(args.path),
-            getattr(args, "config_path", None),
-        )
+        return create_sandboxed_venv(Path(args.path))
     elif args.subcommand == "config" and args.config_subcommand == "create":
         return config_create_command(args)
 

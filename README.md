@@ -115,8 +115,9 @@ Create a sandboxed virtual environment. The venv's Python binaries are replaced 
 ```bash
 malwi-box venv                    # creates .venv
 malwi-box venv --path myenv       # custom path
-malwi-box venv --config FILE      # use custom config
 ```
+
+Config is read from `.malwi-box.toml` in the current working directory at runtime.
 
 After creation, activate and use normally:
 ```bash

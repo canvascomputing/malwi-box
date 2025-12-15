@@ -240,13 +240,11 @@ def inject(mode: str = "run", config_path: str | None = None) -> int:
     return 0
 
 
-def create_sandboxed_venv(
-    venv_path: Path,
-    config_path: str | None = None,
-) -> int:
+def create_sandboxed_venv(venv_path: Path) -> int:
     """Create a virtual environment with malwi-box wrapper installed.
 
-    The mode is controlled at runtime via MALWI_BOX_MODE environment variable.
+    The sandbox is enabled by default. Use MALWI_BOX_ENABLED=0 to disable.
+    Config is read from .malwi-box.toml in the current working directory at runtime.
 
     Returns exit code (0 = success, non-zero = error).
     """
@@ -266,9 +264,12 @@ def create_sandboxed_venv(
     print(f"Creating sandboxed venv: {venv_path}")
 
     # Step 1: Create venv WITHOUT pip (to avoid issues with audit hooks)
+    print("  Creating virtual environment...", end=" ", flush=True)
     try:
         venv.create(venv_path, with_pip=False)
+        print("done")
     except Exception as e:
+        print("failed")
         print(f"Error creating venv: {e}", file=sys.stderr)
         return 1
 
@@ -284,16 +285,19 @@ def create_sandboxed_venv(
         base_python = Path(sys.executable).resolve()
 
     # Step 3: Compile malwi_python wrapper for the base Python
-    print(f"Compiling malwi_python wrapper for {base_python}...")
+    print("  Compiling sandbox wrapper...", end=" ", flush=True)
     wrapper_path = bin_dir / "malwi_python_wrapper"
     success, error = build_malwi_python(wrapper_path, base_python)
     if not success:
+        print("failed")
         # Clean up the venv since we failed
         shutil.rmtree(venv_path, ignore_errors=True)
         print(COMPILE_ERROR_MSG.format(error=error), file=sys.stderr)
         return 1
+    print("done")
 
     # Step 4: Replace Python binaries with the compiled wrapper
+    print("  Installing sandbox wrapper...", end=" ", flush=True)
     binaries = get_python_binaries(bin_dir)
     injected = []
     errors = []
@@ -317,13 +321,16 @@ def create_sandboxed_venv(
     wrapper_path.unlink(missing_ok=True)
 
     if errors:
+        print("failed")
         print(f"\nErrors ({len(errors)}):", file=sys.stderr)
         for b, err in errors:
             print(f"  {b.name}: {err}", file=sys.stderr)
         return 1
+    print("done")
 
     # Step 5: Install pip using the wrapped Python (which is NOT sandboxed yet)
     # The wrapper only activates when MALWI_BOX_ENABLED=1
+    print("  Installing pip...", end=" ", flush=True)
     python_bin = bin_dir / "python"
     try:
         result = subprocess.run(
@@ -332,11 +339,16 @@ def create_sandboxed_venv(
             text=True,
         )
         if result.returncode != 0:
+            print("failed")
             print(f"Warning: Failed to install pip: {result.stderr}", file=sys.stderr)
+        else:
+            print("done")
     except Exception as e:
+        print("failed")
         print(f"Warning: Failed to install pip: {e}", file=sys.stderr)
 
     # Step 6: Install malwi-box package (required for the hook to function)
+    print("  Installing malwi-box...", end=" ", flush=True)
     try:
         result = subprocess.run(
             [str(python_bin), "-m", "pip", "install", "malwi-box", "-q"],
@@ -344,20 +356,20 @@ def create_sandboxed_venv(
             text=True,
         )
         if result.returncode != 0:
+            print("failed")
             print(f"Warning: Failed to install malwi-box: {result.stderr}", file=sys.stderr)
+        else:
+            print("done")
     except Exception as e:
+        print("failed")
         print(f"Warning: Failed to install malwi-box: {e}", file=sys.stderr)
 
     # Print success message
-    print(f"\nCreated sandboxed venv with {len(injected)} wrapped binaries")
-    if config_path:
-        print(f"Config: {config_path}")
-
-    print(f"\nTo activate:")
+    print(f"\nDone! Sandboxed venv created at: {venv_path}")
+    print(f"\nUsage:")
     print(f"  source {venv_path}/bin/activate")
-    print(f"\nTo run code directly:")
     print(f"  {venv_path}/bin/python -c \"print('hello')\"")
-    print(f"\nSandboxing is enabled by default.")
-    print(f"To disable: export MALWI_BOX_ENABLED=0")
+    print(f"\nSandbox is enabled by default. To disable: export MALWI_BOX_ENABLED=0")
+    print(f"Config: .malwi-box.toml (in current working directory)")
 
     return 0
