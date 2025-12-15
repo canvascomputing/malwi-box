@@ -13,6 +13,7 @@
  *   MALWI_BOX_MODE       - "run", "force", or "review" (default: "run")
  *   MALWI_BOX_CONFIG     - Path to config file (optional)
  *   MALWI_BOX_DEBUG=1    - Enable debug output
+ *   PYTHONHOME           - Override default Python home (optional)
  */
 
 #define PY_SSIZE_T_CLEAN
@@ -22,12 +23,31 @@
 #include <string.h>
 #include <wchar.h>
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#include <libgen.h>
+#endif
+
+#ifdef __linux__
+#include <unistd.h>
+#include <libgen.h>
+#include <linux/limits.h>
+#endif
+
+// Default Python home - set at compile time via -DDEFAULT_PYTHON_HOME="..."
+#ifndef DEFAULT_PYTHON_HOME
+#define DEFAULT_PYTHON_HOME ""
+#endif
+
 // Forward declarations
 static void inject_python_hook(void);
+static char *get_executable_dir(void);
+static const char *get_python_home(void);
 
 // Global state
 static int g_hook_injected = 0;
 static const char *g_mode = "run";
+static char g_exe_dir[4096] = {0};
 
 // Debug helper
 static int is_debug_enabled(void) {
@@ -39,6 +59,70 @@ static int is_debug_enabled(void) {
 static int is_hook_enabled(void) {
     const char *enabled = getenv("MALWI_BOX_ENABLED");
     return enabled && strcmp(enabled, "1") == 0;
+}
+
+/**
+ * Get the directory containing this executable.
+ * Returns pointer to static buffer, or NULL on failure.
+ */
+static char *get_executable_dir(void) {
+    if (g_exe_dir[0] != '\0') {
+        return g_exe_dir;  // Already computed
+    }
+
+#ifdef __APPLE__
+    uint32_t size = sizeof(g_exe_dir);
+    if (_NSGetExecutablePath(g_exe_dir, &size) == 0) {
+        // Get the directory part
+        char *dir = dirname(g_exe_dir);
+        if (dir) {
+            // realpath to resolve symlinks
+            char resolved[4096];
+            if (realpath(dir, resolved)) {
+                strncpy(g_exe_dir, resolved, sizeof(g_exe_dir) - 1);
+                return g_exe_dir;
+            }
+            strncpy(g_exe_dir, dir, sizeof(g_exe_dir) - 1);
+            return g_exe_dir;
+        }
+    }
+#endif
+
+#ifdef __linux__
+    ssize_t len = readlink("/proc/self/exe", g_exe_dir, sizeof(g_exe_dir) - 1);
+    if (len > 0) {
+        g_exe_dir[len] = '\0';
+        char *dir = dirname(g_exe_dir);
+        if (dir) {
+            // dirname may modify the buffer, so copy result back
+            char tmp[4096];
+            strncpy(tmp, dir, sizeof(tmp) - 1);
+            strncpy(g_exe_dir, tmp, sizeof(g_exe_dir) - 1);
+            return g_exe_dir;
+        }
+    }
+#endif
+
+    return NULL;
+}
+
+/**
+ * Get the Python home directory.
+ * Priority: PYTHONHOME env var > compile-time DEFAULT_PYTHON_HOME
+ */
+static const char *get_python_home(void) {
+    // First check environment variable
+    const char *env_home = getenv("PYTHONHOME");
+    if (env_home && env_home[0]) {
+        return env_home;
+    }
+
+    // Fall back to compile-time default
+    if (DEFAULT_PYTHON_HOME[0]) {
+        return DEFAULT_PYTHON_HOME;
+    }
+
+    return NULL;
 }
 
 /**
@@ -147,16 +231,25 @@ int main(int argc, char *argv[]) {
     PyConfig config;
     PyConfig_InitPythonConfig(&config);
 
-    // Set Python home from PYTHONHOME env or from executable path
-    const char *python_home = getenv("PYTHONHOME");
-    if (python_home && python_home[0]) {
+    // Set Python home (env var takes priority, then compile-time default)
+    const char *python_home = get_python_home();
+    if (python_home) {
         size_t len = strlen(python_home) + 1;
         wchar_t *whome = (wchar_t *)malloc(len * sizeof(wchar_t));
         if (whome) {
             mbstowcs(whome, python_home, len);
             PyConfig_SetString(&config, &config.home, whome);
             free(whome);
+            if (verbose) {
+                fprintf(stderr, "[malwi_python] PYTHONHOME=%s\n", python_home);
+            }
         }
+    }
+
+    // Add executable's directory to module search path (for finding malwi_box)
+    char *exe_dir = get_executable_dir();
+    if (exe_dir && verbose) {
+        fprintf(stderr, "[malwi_python] Executable dir: %s\n", exe_dir);
     }
 
     // Set program name and arguments
@@ -186,6 +279,26 @@ int main(int argc, char *argv[]) {
 
     if (verbose) {
         fprintf(stderr, "[malwi_python] Python initialized\n");
+    }
+
+    // Add executable's directory to sys.path so we can find malwi_box
+    if (exe_dir) {
+        char path_code[4096];
+        snprintf(path_code, sizeof(path_code),
+            "import sys\n"
+            "exe_dir = '%s'\n"
+            "if exe_dir not in sys.path:\n"
+            "    sys.path.insert(0, exe_dir)\n"
+            "# Also add parent dir (for package imports when in site-packages)\n"
+            "import os\n"
+            "parent = os.path.dirname(exe_dir)\n"
+            "if parent not in sys.path:\n"
+            "    sys.path.insert(0, parent)\n",
+            exe_dir);
+        PyRun_SimpleString(path_code);
+        if (verbose) {
+            fprintf(stderr, "[malwi_python] Added %s to sys.path\n", exe_dir);
+        }
     }
 
     // Inject the Python-level hook now that Python is fully initialized

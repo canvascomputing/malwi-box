@@ -65,6 +65,11 @@ class CustomBuildExt(build_ext):
             # Fallback: use the directory containing the Python executable's lib
             lib_dir = os.path.join(os.path.dirname(python_dir), "lib")
 
+        # Get Python home (prefix) to embed as default
+        python_home = sysconfig.get_config_var("prefix")
+        if not python_home:
+            python_home = os.path.dirname(python_dir)
+
         compiler = "clang" if sys.platform == "darwin" else "gcc"
 
         # Build command with rpath for finding libpython at runtime
@@ -76,7 +81,10 @@ class CustomBuildExt(build_ext):
         # Add -L flag to specify library search path (python3-config may not include it)
         lib_flag = f"-L{lib_dir}"
 
-        cmd = f'{compiler} {cflags} -o "{out_file}" "{src}" {lib_flag} {ldflags} {rpath_flag}'
+        # Add compile-time define for default Python home
+        python_home_define = f'-DDEFAULT_PYTHON_HOME=\\"{python_home}\\"'
+
+        cmd = f'{compiler} {cflags} {python_home_define} -o "{out_file}" "{src}" {lib_flag} {ldflags} {rpath_flag}'
 
         print(f"Building malwi_python: {out_file}")
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)

@@ -41,8 +41,8 @@ class TestWrapperExecution:
 
     @pytest.fixture
     def wrapper_env(self):
-        """Get base environment for wrapper (includes PYTHONHOME, PYTHONPATH)."""
-        # Use get_wrapper_env to get PYTHONHOME and PYTHONPATH, but without hook enabled
+        """Get base environment for wrapper."""
+        # The wrapper binary auto-detects PYTHONHOME, so we just need to disable the hook
         env = get_wrapper_env(mode="run")
         env["MALWI_BOX_ENABLED"] = "0"  # Disable by default
         return {**os.environ, **env}

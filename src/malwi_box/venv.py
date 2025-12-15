@@ -159,14 +159,10 @@ def create_sandboxed_venv(
         print(f"Error creating venv: {e}", file=sys.stderr)
         return 1
 
-    # Step 2: Inject wrapper into venv's bin directory
+    # Step 2: Replace Python binaries with malwi_python wrapper
+    # The binary auto-detects PYTHONHOME and adds its directory to sys.path
     bin_dir = venv_path / "bin"
     binaries = get_python_binaries(bin_dir)
-
-    if not binaries:
-        print(f"Error: No Python binaries found in {bin_dir}", file=sys.stderr)
-        return 1
-
     injected = []
     errors = []
 
@@ -177,7 +173,7 @@ def create_sandboxed_venv(
             # Rename original to .orig
             shutil.move(str(binary), str(backup))
 
-            # Copy wrapper to original location
+            # Copy malwi_python wrapper directly
             shutil.copy2(str(wrapper_path), str(binary))
             binary.chmod(0o755)
 
@@ -224,5 +220,7 @@ def create_sandboxed_venv(
 
     print(f"\nTo activate:")
     print(f"  source {venv_path}/bin/activate")
+    print(f"\nTo enable sandboxing:")
+    print(f"  export MALWI_BOX_ENABLED=1")
 
     return 0
