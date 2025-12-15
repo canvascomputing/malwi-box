@@ -125,6 +125,12 @@ python script.py                  # sandboxed automatically
 pip install requests              # install scripts are sandboxed
 ```
 
+Or run code directly without activating:
+```bash
+$ .venv/bin/python -c "import socket; socket.socket().connect(('evil.com', 80))"
+[malwi-box] Blocked: Connect: evil.com:80
+```
+
 ### config
 
 Manage configuration.

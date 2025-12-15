@@ -39,6 +39,13 @@
 #define DEFAULT_PYTHON_HOME ""
 #endif
 
+// Default enabled state - set at compile time via -DDEFAULT_ENABLED=1
+// When enabled by default, MALWI_BOX_ENABLED=0 disables the hook
+// When disabled by default, MALWI_BOX_ENABLED=1 enables the hook
+#ifndef DEFAULT_ENABLED
+#define DEFAULT_ENABLED 0
+#endif
+
 // Forward declarations
 static void inject_python_hook(void);
 static char *get_executable_dir(void);
@@ -58,7 +65,13 @@ static int is_debug_enabled(void) {
 // Check if hook is enabled
 static int is_hook_enabled(void) {
     const char *enabled = getenv("MALWI_BOX_ENABLED");
-    return enabled && strcmp(enabled, "1") == 0;
+    if (DEFAULT_ENABLED) {
+        // Enabled by default - check for explicit disable
+        return !(enabled && strcmp(enabled, "0") == 0);
+    } else {
+        // Disabled by default - check for explicit enable
+        return enabled && strcmp(enabled, "1") == 0;
+    }
 }
 
 /**

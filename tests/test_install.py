@@ -255,6 +255,79 @@ version = "0.0.1"
             cleanup_wrapper_bin_dir(bin_dir)
 
 
+class TestVenvCompilation:
+    """Test the venv compilation functionality."""
+
+    def test_build_fails_gracefully_without_compiler(self, tmp_path):
+        """Test that build_malwi_python fails gracefully when compiler is missing."""
+        from malwi_box.venv import build_malwi_python
+
+        # Create a fake PATH with no compiler
+        fake_bin = tmp_path / "fake_bin"
+        fake_bin.mkdir()
+
+        # Create a fake python3-config that works
+        python_config = fake_bin / "python3-config"
+        python_config.write_text(f"""#!/bin/bash
+if [ "$1" = "--cflags" ]; then
+    echo "-I/usr/include/python3.10"
+elif [ "$1" = "--ldflags" ]; then
+    echo "-lpython3.10"
+fi
+""")
+        python_config.chmod(0o755)
+
+        # Create a fake python executable
+        fake_python = fake_bin / "python3"
+        fake_python.write_text(f"""#!/bin/bash
+echo ""
+echo ""
+""")
+        fake_python.chmod(0o755)
+
+        output_path = tmp_path / "malwi_python"
+
+        # Modify PATH to exclude real compilers
+        old_path = os.environ.get("PATH", "")
+        try:
+            os.environ["PATH"] = str(fake_bin)
+            success, error = build_malwi_python(output_path, fake_python)
+
+            # Should fail but not crash
+            assert success is False
+            assert error is not None
+        finally:
+            os.environ["PATH"] = old_path
+
+    def test_build_fails_gracefully_without_python_config(self, tmp_path):
+        """Test that build_malwi_python fails gracefully when python3-config is missing."""
+        from malwi_box.venv import build_malwi_python
+
+        # Create a fake bin directory with no python3-config
+        fake_bin = tmp_path / "fake_bin"
+        fake_bin.mkdir()
+
+        # Create a fake python executable (but no python3-config)
+        fake_python = fake_bin / "python3"
+        fake_python.write_text("#!/bin/bash\necho 'fake python'")
+        fake_python.chmod(0o755)
+
+        output_path = tmp_path / "malwi_python"
+
+        # Modify PATH to only include fake_bin (no python3-config anywhere)
+        old_path = os.environ.get("PATH", "")
+        try:
+            os.environ["PATH"] = str(fake_bin)
+            success, error = build_malwi_python(output_path, fake_python)
+
+            # Should fail but not crash
+            assert success is False
+            assert error is not None
+            assert "python3-config" in error.lower()
+        finally:
+            os.environ["PATH"] = old_path
+
+
 class TestBinDirSetup:
     """Test the bin directory setup for PATH manipulation."""
 

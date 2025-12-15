@@ -49,3 +49,4 @@ ENV/
 
 # Compiled binary wrapper
 src/malwi_box/malwi_python
+src/malwi_box/malwi_python.dSYM/
