@@ -8,6 +8,20 @@ import sys
 from malwi_box import __version__
 
 
+def _wrapper_not_available_error() -> str:
+    """Return a helpful error message when wrapper is not available."""
+    return """\
+Error: Wrapper binary not available.
+
+The malwi_python wrapper binary is required but was not found. This can happen when:
+  1. Running from a pip install (wrapper is only built for venvs)
+  2. Development build not completed
+
+To fix this:
+  - For sandboxed execution: Create a venv with 'malwi-box venv' and activate it
+  - For development: Run 'uv run python3 setup.py build_ext --inplace'"""
+
+
 def _get_mode(args: argparse.Namespace) -> str:
     """Get the mode from args."""
     if getattr(args, "force", False):
@@ -40,7 +54,7 @@ def run_command(args: argparse.Namespace) -> int:
 
     bin_dir, wrapper_env = setup_wrapper_bin_dir(mode, config_path)
     if bin_dir is None:
-        print("Error: Wrapper not available", file=sys.stderr)
+        print(_wrapper_not_available_error(), file=sys.stderr)
         return 1
 
     try:
@@ -72,7 +86,7 @@ def eval_command(args: argparse.Namespace) -> int:
 
     bin_dir, wrapper_env = setup_wrapper_bin_dir(mode, config_path)
     if bin_dir is None:
-        print("Error: Wrapper not available", file=sys.stderr)
+        print(_wrapper_not_available_error(), file=sys.stderr)
         return 1
 
     try:
@@ -123,7 +137,7 @@ def install_command(args: argparse.Namespace) -> int:
 
     bin_dir, wrapper_env = setup_wrapper_bin_dir(mode, config_path)
     if bin_dir is None:
-        print("Error: Wrapper not available", file=sys.stderr)
+        print(_wrapper_not_available_error(), file=sys.stderr)
         return 1
 
     try:
