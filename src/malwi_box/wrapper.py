@@ -12,7 +12,7 @@ def get_malwi_python_path() -> Path | None:
 
     This function checks if a pre-built binary exists in the package directory.
     For development, the binary is built via `setup.py build_ext --inplace`.
-    For venv creation, the binary is compiled by `venv.py` during `malwi-box venv`.
+    For sandboxed venvs, the binary is copied during `malwi-box venv`.
 
     Returns:
         Path to malwi_python or None if not found.
