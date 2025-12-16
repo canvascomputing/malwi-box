@@ -60,6 +60,110 @@ static int g_in_env_callback = 0;
 static int g_log_info_events = 1;
 
 // =============================================================================
+// Section 2b: Info Event Logging Infrastructure
+// =============================================================================
+
+// ANSI color codes for terminal output
+#define ANSI_CYAN "\033[36m"
+#define ANSI_RESET "\033[0m"
+#define ANSI_CLEAR_LINE "\r\033[K"
+
+// Log an info event directly to stderr (no Python callback needed)
+static void log_info_event(const char *msg) {
+    if (!g_log_info_events) return;
+    fprintf(stderr, "%s%s[malwi-box] %s%s\n", ANSI_CLEAR_LINE, ANSI_CYAN, msg, ANSI_RESET);
+    fflush(stderr);
+}
+
+// Helper to safely get string from PyObject (returns "?" on failure)
+static const char* safe_get_string(PyObject *obj) {
+    if (obj == NULL) return "?";
+    if (PyUnicode_Check(obj)) {
+        const char *str = PyUnicode_AsUTF8(obj);
+        return str ? str : "?";
+    }
+    if (PyBytes_Check(obj)) {
+        const char *str = PyBytes_AsString(obj);
+        return str ? str : "?";
+    }
+    return "?";
+}
+
+// Format and log os.putenv event: "Set env var: KEY=value"
+static void log_putenv_event(PyObject *args) {
+    if (!g_log_info_events) return;
+    if (!args || !PyTuple_Check(args) || PyTuple_Size(args) < 2) {
+        log_info_event("Set env var: ?");
+        return;
+    }
+    const char *key = safe_get_string(PyTuple_GetItem(args, 0));
+    const char *val = safe_get_string(PyTuple_GetItem(args, 1));
+
+    char buf[256];
+    // Truncate value to 50 chars
+    if (strlen(val) > 50) {
+        char truncated[54];
+        strncpy(truncated, val, 47);
+        strcpy(truncated + 47, "...");
+        snprintf(buf, sizeof(buf), "Set env var: %s=%s", key, truncated);
+    } else {
+        snprintf(buf, sizeof(buf), "Set env var: %s=%s", key, val);
+    }
+    log_info_event(buf);
+}
+
+// Format and log os.unsetenv event: "Unset env var: KEY"
+static void log_unsetenv_event(PyObject *args) {
+    if (!g_log_info_events) return;
+    if (!args || !PyTuple_Check(args) || PyTuple_Size(args) < 1) {
+        log_info_event("Unset env var: ?");
+        return;
+    }
+    const char *key = safe_get_string(PyTuple_GetItem(args, 0));
+
+    char buf[128];
+    snprintf(buf, sizeof(buf), "Unset env var: %s", key);
+    log_info_event(buf);
+}
+
+// Format and log pickle.find_class event: "Pickle: module.class"
+static void log_pickle_event(PyObject *args) {
+    if (!g_log_info_events) return;
+    if (!args || !PyTuple_Check(args) || PyTuple_Size(args) < 2) {
+        log_info_event("Pickle: ?");
+        return;
+    }
+    const char *module = safe_get_string(PyTuple_GetItem(args, 0));
+    const char *cls = safe_get_string(PyTuple_GetItem(args, 1));
+
+    char buf[256];
+    snprintf(buf, sizeof(buf), "Pickle: %s.%s", module, cls);
+    log_info_event(buf);
+}
+
+// Format and log marshal.loads event: "Marshal: loads"
+static void log_marshal_event(void) {
+    if (!g_log_info_events) return;
+    log_info_event("Marshal: loads");
+}
+
+// Format and log shutil.unpack_archive event: "Unpack: filename -> dir"
+static void log_unpack_archive_event(PyObject *args) {
+    if (!g_log_info_events) return;
+    if (!args || !PyTuple_Check(args) || PyTuple_Size(args) < 1) {
+        log_info_event("Unpack: ?");
+        return;
+    }
+    const char *filename = safe_get_string(PyTuple_GetItem(args, 0));
+    const char *extract_dir = PyTuple_Size(args) > 1 ?
+        safe_get_string(PyTuple_GetItem(args, 1)) : ".";
+
+    char buf[512];
+    snprintf(buf, sizeof(buf), "Unpack: %s -> %s", filename, extract_dir);
+    log_info_event(buf);
+}
+
+// =============================================================================
 // Section 3: AuditedEnviron Type - C wrapper for os.environ
 // =============================================================================
 
@@ -330,6 +434,39 @@ static int audit_hook(const char *event, PyObject *args, void *userData) {
         return 0;
     }
 
+    // Handle PEP 578 info-only events directly in C++ for performance
+    if (g_log_info_events) {
+        if (streq(event, "os.putenv")) {
+            log_putenv_event(args);
+            return 0;
+        }
+        if (streq(event, "os.unsetenv")) {
+            log_unsetenv_event(args);
+            return 0;
+        }
+        if (streq(event, "pickle.find_class")) {
+            log_pickle_event(args);
+            return 0;
+        }
+        if (streq(event, "marshal.loads")) {
+            log_marshal_event();
+            return 0;
+        }
+        if (streq(event, "shutil.unpack_archive")) {
+            log_unpack_archive_event(args);
+            return 0;
+        }
+    } else {
+        // If info logging is disabled, still skip these events to avoid Python callback
+        if (streq(event, "os.putenv") ||
+            streq(event, "os.unsetenv") ||
+            streq(event, "pickle.find_class") ||
+            streq(event, "marshal.loads") ||
+            streq(event, "shutil.unpack_archive")) {
+            return 0;
+        }
+    }
+
     // Get the module from global pointer
     if (g_module == NULL) {
         return 0;
@@ -496,19 +633,6 @@ static int get_frame_func_info(PyFrameObject *frame, FrameFuncInfo *info) {
 // Release frame function info
 static void release_frame_func_info(FrameFuncInfo *info) {
     Py_DECREF(info->code);
-}
-
-// Fire an audit event with a single string argument
-static void fire_simple_event(const char *event, const char *arg) {
-    PyObject *arg_str = PyUnicode_FromString(arg);
-    if (arg_str != NULL) {
-        PyObject *args = PyTuple_Pack(1, arg_str);
-        if (args != NULL) {
-            invoke_audit_callback(event, args);
-            Py_DECREF(args);
-        }
-        Py_DECREF(arg_str);
-    }
 }
 
 // Helper to get item from locals (works with both dict and frame-locals proxy in Python 3.13+)
@@ -773,60 +897,64 @@ static void check_http_function_call(PyFrameObject *frame) {
 }
 
 // Check if current frame is an encoding function call (base64, binascii, compression)
+// Logs directly to stderr for performance
 static void check_encoding_function_call(PyFrameObject *frame) {
     FrameFuncInfo info;
     if (!get_frame_func_info(frame, &info)) return;
+
+    char buf[128];
 
     // base64 module - check for encode/decode functions
     if (strstr(info.filename, "base64.py") != NULL) {
         if (strstr(info.func_name, "encode") != NULL ||
             strstr(info.func_name, "decode") != NULL) {
-            fire_simple_event("encoding.base64", info.func_name);
+            snprintf(buf, sizeof(buf), "Base64: %s", info.func_name);
+            log_info_event(buf);
         }
     }
 
     // hex encoding - binascii module
     if (strstr(info.filename, "binascii") != NULL) {
         if (streq(info.func_name, "hexlify") || streq(info.func_name, "b2a_hex")) {
-            fire_simple_event("encoding.hex", "hexlify");
+            log_info_event("Hex: hexlify");
         } else if (streq(info.func_name, "unhexlify") || streq(info.func_name, "a2b_hex")) {
-            fire_simple_event("encoding.hex", "unhexlify");
+            log_info_event("Hex: unhexlify");
         }
     }
 
     // gzip compression - gzip.py module
     if (strstr(info.filename, "gzip.py") != NULL) {
         if (streq(info.func_name, "compress")) {
-            fire_simple_event("encoding.gzip", "compress");
+            log_info_event("Gzip: compress");
         } else if (streq(info.func_name, "decompress")) {
-            fire_simple_event("encoding.gzip", "decompress");
+            log_info_event("Gzip: decompress");
         }
     }
 
     // zlib compression - C module, check for zlib in filename
     if (strstr(info.filename, "zlib") != NULL) {
         if (streq(info.func_name, "compress") || streq(info.func_name, "compressobj")) {
-            fire_simple_event("encoding.zlib", "compress");
+            log_info_event("Zlib: compress");
         } else if (streq(info.func_name, "decompress") || streq(info.func_name, "decompressobj")) {
-            fire_simple_event("encoding.zlib", "decompress");
+            log_info_event("Zlib: decompress");
         }
     }
 
     // bz2 compression - check for bz2 in filename
     if (strstr(info.filename, "bz2") != NULL) {
         if (streq(info.func_name, "compress")) {
-            fire_simple_event("encoding.bz2", "compress");
+            log_info_event("Bz2: compress");
         } else if (streq(info.func_name, "decompress")) {
-            fire_simple_event("encoding.bz2", "decompress");
+            log_info_event("Bz2: decompress");
         }
     }
 
     // lzma compression - check for lzma in filename
     if (strstr(info.filename, "lzma") != NULL) {
         if (streq(info.func_name, "compress")) {
-            fire_simple_event("encoding.lzma", "compress");
+            log_info_event("LZMA: compress");
         } else if (streq(info.func_name, "decompress")) {
-            fire_simple_event("encoding.lzma", "decompress");
+            log_info_event("LZMA: decompress");
         }
     }
 
@@ -834,30 +962,37 @@ static void check_encoding_function_call(PyFrameObject *frame) {
 }
 
 // Check if current frame is a crypto function call (cryptography library, hmac, secrets)
+// Logs directly to stderr for performance
 static void check_crypto_function_call(PyFrameObject *frame) {
     FrameFuncInfo info;
     if (!get_frame_func_info(frame, &info)) return;
 
+    char buf[128];
+
     // cryptography library - cipher operations
     if (strstr(info.filename, "cryptography") != NULL &&
         strstr(info.filename, "ciphers") != NULL) {
-        if (streq(info.func_name, "encryptor") || streq(info.func_name, "decryptor")) {
-            fire_simple_event("crypto.cipher", info.func_name);
+        if (streq(info.func_name, "encryptor")) {
+            log_info_event("Cipher: Encrypt");
+        } else if (streq(info.func_name, "decryptor")) {
+            log_info_event("Cipher: Decrypt");
         }
     }
 
     // Fernet (high-level encryption)
     if (strstr(info.filename, "fernet.py") != NULL) {
-        if (streq(info.func_name, "encrypt") || streq(info.func_name, "decrypt") ||
-            streq(info.func_name, "encrypt_at_time") || streq(info.func_name, "decrypt_at_time")) {
-            fire_simple_event("crypto.fernet", info.func_name);
+        if (streq(info.func_name, "encrypt") || streq(info.func_name, "encrypt_at_time")) {
+            log_info_event("Fernet: encrypt");
+        } else if (streq(info.func_name, "decrypt") || streq(info.func_name, "decrypt_at_time")) {
+            log_info_event("Fernet: decrypt");
         }
     }
 
     // hmac module
     if (strstr(info.filename, "hmac.py") != NULL) {
         if (streq(info.func_name, "new") || streq(info.func_name, "digest")) {
-            fire_simple_event("crypto.hmac", info.func_name);
+            snprintf(buf, sizeof(buf), "HMAC: %s", info.func_name);
+            log_info_event(buf);
         }
     }
 
@@ -866,7 +1001,8 @@ static void check_crypto_function_call(PyFrameObject *frame) {
         if (streq(info.func_name, "token_bytes") ||
             streq(info.func_name, "token_hex") ||
             streq(info.func_name, "token_urlsafe")) {
-            fire_simple_event("secrets.token", info.func_name);
+            snprintf(buf, sizeof(buf), "SecureRandom: %s", info.func_name);
+            log_info_event(buf);
         }
     }
 
@@ -875,7 +1011,7 @@ static void check_crypto_function_call(PyFrameObject *frame) {
         strstr(info.filename, "rsa") != NULL) {
         if (streq(info.func_name, "generate_private_key") ||
             streq(info.func_name, "_generate_private_key")) {
-            fire_simple_event("crypto.rsa", "generate");
+            log_info_event("RSA: generate");
         }
     }
 
@@ -884,11 +1020,11 @@ static void check_crypto_function_call(PyFrameObject *frame) {
         // AES algorithm instantiation
         if (streq(info.func_name, "AES") || streq(info.func_name, "AES128") ||
             streq(info.func_name, "AES256")) {
-            fire_simple_event("crypto.aes", "init");
+            log_info_event("AES: init");
         }
         // ChaCha20 algorithm instantiation
         if (streq(info.func_name, "ChaCha20") || streq(info.func_name, "ChaCha20Poly1305")) {
-            fire_simple_event("crypto.chacha20", "init");
+            log_info_event("ChaCha20: init");
         }
     }
 

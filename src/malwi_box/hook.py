@@ -126,35 +126,6 @@ def _configure_info_events(engine: "BoxEngine") -> None:
 # =============================================================================
 
 
-def _get_caller_location() -> str:
-    """Get caller location (basename:lineno) excluding malwi-box internals."""
-    stack = inspect.stack()
-    skip_paths = {"malwi_box", "sitecustomize.py"}
-
-    for frame_info in stack:
-        filename = frame_info.filename
-        if any(skip in filename for skip in skip_paths):
-            continue
-        if "<" in filename:  # e.g., <frozen importlib._bootstrap>
-            continue
-        basename = os.path.basename(filename)
-        return f" ({basename}:{frame_info.lineno})"
-
-    return ""
-
-
-def _log_info_event(event: str, args: tuple) -> None:
-    """Log an info-only event (cyan color) with caller location."""
-    from malwi_box import format_event
-
-    formatted = format_event(event, args)
-    location = _get_caller_location()
-    # Clear line first to avoid being overwritten by progress bars
-    msg = f"{Color.CLEAR_LINE}{Color.CYAN}[malwi-box] {formatted}{location}{Color.RESET}\n"
-    sys.stderr.write(msg)
-    sys.stderr.flush()
-
-
 def _log_violation(event: str, args: tuple, color: str) -> None:
     """Log a permission violation with specified color."""
     from malwi_box import format_event
@@ -215,12 +186,9 @@ def _create_hook_callback(
         on_violation: Called when permission is denied (event, args)
 
     Returns:
-        Hook callback function with recursion guard and info event handling
+        Hook callback function with recursion guard
     """
-    from malwi_box.engine import INFO_ONLY_EVENTS
-
     in_hook = False
-    log_info = engine.config.get("log_info_events", True)
 
     def hook(event: str, args: tuple) -> None:
         nonlocal in_hook
@@ -229,21 +197,12 @@ def _create_hook_callback(
 
         in_hook = True
         try:
-            if event in INFO_ONLY_EVENTS:
-                if log_info:
-                    _log_info_event(event, args)
-                return
-
             # Handle env var reads with unified classification
             if event in ("os.getenv", "os.environ.get"):
                 var_name = args[0] if args else ""
                 classification = engine.classify_env_var(var_name)
-                if classification == "silent":
-                    return  # No logging
-                if classification == "info":
-                    if log_info:
-                        _log_info_event(event, args)
-                    return
+                if classification in ("silent", "info"):
+                    return  # No blocking for safe/info env vars
                 # "block" falls through to permission check
 
             if not engine.check_permission(event, args):
@@ -415,14 +374,13 @@ def setup_review_hook(engine: BoxEngine | None = None) -> None:
         engine: BoxEngine instance. If None, creates a new one.
     """
     from malwi_box import extract_decision_details, format_event
-    from malwi_box.engine import INFO_ONLY_EVENTS, BoxEngine
+    from malwi_box.engine import BoxEngine
     from malwi_box.formatting import format_stack_trace
 
     if engine is None:
         engine = BoxEngine()
 
     _configure_info_events(engine)
-    log_info = engine.config.get("log_info_events", True)
 
     session_allowed: set[tuple] = set()
     in_hook = False
@@ -440,30 +398,12 @@ def setup_review_hook(engine: BoxEngine | None = None) -> None:
         if in_hook:
             return
 
-        # Info-only events: log immediately (if enabled), no approval needed
-        if event in INFO_ONLY_EVENTS:
-            if log_info:
-                in_hook = True
-                try:
-                    _log_info_event(event, args)
-                finally:
-                    in_hook = False
-            return
-
         # Handle env var reads with unified classification
         if event in ("os.getenv", "os.environ.get"):
             var_name = args[0] if args else ""
             classification = engine.classify_env_var(var_name)
-            if classification == "silent":
-                return  # No logging
-            if classification == "info":
-                if log_info:
-                    in_hook = True
-                    try:
-                        _log_info_event(event, args)
-                    finally:
-                        in_hook = False
-                return
+            if classification in ("silent", "info"):
+                return  # No blocking for safe/info env vars
             # "block" falls through to permission check
 
         # Check if already approved this session
