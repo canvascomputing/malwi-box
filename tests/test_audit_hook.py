@@ -1,22 +1,27 @@
+import os
+import tempfile
+
 import pytest
 
 from malwi_box import install_hook, uninstall_hook
 
 
-def test_install_and_capture_exec_event():
-    """Test that audit hooks capture exec events."""
+def test_install_and_capture_open_event():
+    """Test that audit hooks capture file open events."""
     events = []
 
     def hook(event, args):
-        if event == "exec":
+        if event == "open":
             events.append(event)
 
     install_hook(hook)
-    exec("x = 1")
+    # Open a file to trigger the 'open' event
+    with tempfile.NamedTemporaryFile() as f:
+        pass
     uninstall_hook()
 
-    assert len(events) == 1
-    assert events[0] == "exec"
+    assert len(events) >= 1
+    assert events[0] == "open"
 
 
 def test_uninstall_stops_capturing():
@@ -24,20 +29,21 @@ def test_uninstall_stops_capturing():
     events = []
 
     def hook(event, args):
-        events.append(event)
+        if event == "os.getenv":
+            events.append(event)
 
     install_hook(hook)
-    exec("x = 1")
+    os.getenv("TEST_UNINSTALL_1")
 
     uninstall_hook()
-    # Count AFTER uninstall completes (some events may fire during uninstall)
+    # Count AFTER uninstall completes
     count_after_uninstall = len(events)
 
-    exec("y = 2")
-    count_after_exec = len(events)
+    os.getenv("TEST_UNINSTALL_2")
+    count_after_getenv = len(events)
 
     # No new events should be captured after uninstall completes
-    assert count_after_exec == count_after_uninstall
+    assert count_after_getenv == count_after_uninstall
 
 
 def test_callback_receives_event_and_args():
@@ -48,16 +54,17 @@ def test_callback_receives_event_and_args():
         captured.append((event, args))
 
     install_hook(hook)
-    exec("z = 42")
+    os.getenv("TEST_CALLBACK_ARGS")
     uninstall_hook()
 
-    # Find the exec event
-    exec_events = [(e, a) for e, a in captured if e == "exec"]
-    assert len(exec_events) >= 1
+    # Find the os.getenv event
+    getenv_events = [(e, a) for e, a in captured if e == "os.getenv"]
+    assert len(getenv_events) >= 1
 
-    event, args = exec_events[0]
-    assert event == "exec"
+    event, args = getenv_events[0]
+    assert event == "os.getenv"
     assert isinstance(args, tuple)
+    assert args[0] == "TEST_CALLBACK_ARGS"
 
 
 def test_callback_must_be_callable():
@@ -66,20 +73,27 @@ def test_callback_must_be_callable():
         install_hook("not a callable")
 
 
-def test_blocklist_skips_events():
-    """Test that events in blocklist are not passed to callback."""
-    events = []
+def test_only_security_events_passed_to_callback():
+    """Test that only security-relevant events are passed to callback.
+
+    Events like 'exec', 'import', 'compile' are filtered out at the C level
+    for performance. Only events in the ALLOWED_EVENTS list are passed.
+    """
+    events = set()
 
     def hook(event, args):
-        events.append(event)
+        events.add(event)
 
-    # Block 'exec' events
-    install_hook(hook, blocklist=["exec"])
-    exec("x = 1")
+    install_hook(hook)
+    # Trigger various events
+    exec("x = 1")  # 'exec' event - NOT in allowlist
+    os.getenv("TEST_VAR")  # 'os.getenv' event - IN allowlist
     uninstall_hook()
 
-    # 'exec' should not be in captured events
+    # 'exec' should NOT be in captured events (filtered at C level)
     assert "exec" not in events
+    # 'os.getenv' SHOULD be in captured events
+    assert "os.getenv" in events
 
 
 def test_os_getenv_fires_event():
