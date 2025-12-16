@@ -419,6 +419,44 @@ static inline int is_blocked_event(const char *event) {
            streq(event, "sys.settrace");
 }
 
+// Events that require Python permission checking
+// All other events are skipped at the C level for performance
+static const char* ALLOWED_EVENTS[] = {
+    // File operations
+    "open",
+    "os.remove",
+    "os.unlink",
+    // Environment variables
+    "os.getenv",
+    "os.environ.get",
+    // Process execution
+    "subprocess.Popen",
+    "os.exec",
+    "os.spawn",
+    "os.posix_spawn",
+    "os.system",
+    "ctypes.dlopen",
+    // Network
+    "socket.connect",
+    "socket.getaddrinfo",
+    "socket.gethostbyname",
+    "socket.gethostbyname_ex",
+    "socket.gethostbyaddr",
+    "socket.__new__",
+    // HTTP
+    "urllib.Request",
+    "http.request",
+    NULL
+};
+
+// Check if event requires Python permission checking
+static inline int is_allowed_event(const char *event) {
+    for (int i = 0; ALLOWED_EVENTS[i]; i++) {
+        if (streq(event, ALLOWED_EVENTS[i])) return 1;
+    }
+    return 0;
+}
+
 // The C audit hook function registered with PySys_AddAuditHook
 static int audit_hook(const char *event, PyObject *args, void *userData) {
     // Block dangerous events that could bypass security
@@ -465,6 +503,11 @@ static int audit_hook(const char *event, PyObject *args, void *userData) {
             streq(event, "shutil.unpack_archive")) {
             return 0;
         }
+    }
+
+    // Skip events not in allowlist (no permission checking needed)
+    if (!is_allowed_event(event)) {
+        return 0;
     }
 
     // Get the module from global pointer

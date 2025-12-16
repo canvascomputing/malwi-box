@@ -12,12 +12,11 @@ import atexit
 import inspect
 import os
 import sys
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from malwi_box._audit_hook import (
     clear_callback,
-    set_blocklist,
     set_callback,
     set_log_info_events,
 )
@@ -49,20 +48,14 @@ class Color:
 # =============================================================================
 
 
-def install_hook(
-    callback: Callable[[str, tuple], None],
-    blocklist: Iterable[str] | None = None,
-) -> None:
+def install_hook(callback: Callable[[str, tuple], None]) -> None:
     """Install an audit hook callback.
 
     Args:
         callback: A callable that takes (event: str, args: tuple).
-                  The callback is invoked for every audit event raised
-                  by the Python runtime.
-        blocklist: Optional iterable of event names to skip (not passed to callback).
+                  The callback is invoked for security-relevant audit events.
+                  Events are filtered at the C level for performance.
     """
-    if blocklist is not None:
-        set_blocklist(list(blocklist))
     set_callback(callback)
 
 
@@ -74,41 +67,6 @@ def uninstall_hook() -> None:
     be invoked.
     """
     clear_callback()
-
-
-def set_event_blocklist(blocklist: Iterable[str] | None) -> None:
-    """Set a blocklist of event names to skip.
-
-    Args:
-        blocklist: An iterable of event names to block, or None to clear.
-    """
-    if blocklist is None:
-        set_blocklist(None)
-    else:
-        set_blocklist(list(blocklist))
-
-
-def _build_blocklist(
-    engine: "BoxEngine", extra: Iterable[str] | None = None
-) -> list[str]:
-    """Build blocklist including info-only events if disabled in config.
-
-    Args:
-        engine: BoxEngine instance with config
-        extra: Additional events to block (e.g., review mode blocklist)
-
-    Returns:
-        List of event names to block at the C++ level
-    """
-    from malwi_box.engine import INFO_ONLY_EVENTS
-
-    blocklist = list(extra) if extra else []
-
-    # If info events are disabled, add them to blocklist to skip C++ -> Python callback
-    if not engine.config.get("log_info_events", True):
-        blocklist.extend(INFO_ONLY_EVENTS)
-
-    return blocklist
 
 
 def _configure_info_events(engine: "BoxEngine") -> None:
@@ -238,8 +196,7 @@ def setup_run_hook(engine: BoxEngine | None = None) -> None:
         os._exit(78)
 
     hook = _create_hook_callback(engine, on_violation)
-    blocklist = _build_blocklist(engine)
-    install_hook(hook, blocklist=blocklist if blocklist else None)
+    install_hook(hook)
 
 
 # =============================================================================
@@ -266,16 +223,12 @@ def setup_force_hook(engine: BoxEngine | None = None) -> None:
         _log_violation(event, args, Color.YELLOW)
 
     hook = _create_hook_callback(engine, on_violation)
-    blocklist = _build_blocklist(engine)
-    install_hook(hook, blocklist=blocklist if blocklist else None)
+    install_hook(hook)
 
 
 # =============================================================================
 # Review Mode (Interactive)
 # =============================================================================
-
-# Review mode blocklist - prevents recursion on input()
-REVIEW_BLOCKLIST = frozenset({"builtins.input", "builtins.input/result"})
 
 # Events that replace the current process - atexit handlers won't run
 PROCESS_REPLACING_EVENTS = frozenset({"os.exec", "os.posix_spawn"})
@@ -461,5 +414,4 @@ def setup_review_hook(engine: BoxEngine | None = None) -> None:
         engine.save_decisions()
 
     atexit.register(save_on_exit)
-    blocklist = _build_blocklist(engine, REVIEW_BLOCKLIST)
-    install_hook(hook, blocklist=blocklist if blocklist else None)
+    install_hook(hook)
