@@ -117,8 +117,6 @@ malwi-box venv                    # creates .venv
 malwi-box venv --path myenv       # custom path
 ```
 
-Config is read from `.malwi-box.toml` in the current working directory at runtime.
-
 After creation, activate and use normally:
 ```bash
 source .venv/bin/activate
@@ -130,6 +128,20 @@ Or run code directly without activating:
 ```bash
 $ .venv/bin/python -c "import socket; socket.socket().connect(('evil.com', 80))"
 [malwi-box] Blocked: Connect: evil.com:80
+```
+
+**Environment variables** for controlling the sandbox:
+
+| Variable | Description |
+|----------|-------------|
+| `MALWI_BOX_ENABLED=0` | Disable sandbox |
+| `MALWI_BOX_MODE=review` | Interactive approval mode |
+| `MALWI_BOX_MODE=force` | Log violations without blocking |
+| `MALWI_BOX_CONFIG=<path>` | Path to config file (default: `.malwi-box.toml`) |
+
+```bash
+MALWI_BOX_MODE=review python script.py   # interactive mode
+MALWI_BOX_ENABLED=0 python script.py     # disable sandbox
 ```
 
 ### config

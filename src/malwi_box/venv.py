@@ -263,7 +263,12 @@ def create_sandboxed_venv(venv_path: Path) -> int:
 
     print(f"Creating sandboxed venv: {venv_path}")
 
-    # Step 1: Create venv WITHOUT pip (to avoid issues with audit hooks)
+    # Step 1: Create venv WITHOUT pip
+    # We must install pip AFTER replacing Python binaries because:
+    # - Our wrapper binary has PYTHONHOME baked in at compile time
+    # - pip needs to be installed using our wrapper so it goes to the correct site-packages
+    # - If we use with_pip=True, pip would be installed for the original Python's paths,
+    #   and our wrapper wouldn't be able to find the pip module
     print("  Creating virtual environment...", end=" ", flush=True)
     try:
         venv.create(venv_path, with_pip=False)
@@ -332,6 +337,7 @@ def create_sandboxed_venv(venv_path: Path) -> int:
     # The wrapper only activates when MALWI_BOX_ENABLED=1
     print("  Installing pip...", end=" ", flush=True)
     python_bin = bin_dir / "python"
+    install_failed = False
     try:
         result = subprocess.run(
             [str(python_bin), "-m", "ensurepip", "--upgrade"],
@@ -340,12 +346,29 @@ def create_sandboxed_venv(venv_path: Path) -> int:
         )
         if result.returncode != 0:
             print("failed")
-            print(f"Warning: Failed to install pip: {result.stderr}", file=sys.stderr)
+            install_failed = True
+            if "No module named ensurepip" in result.stderr:
+                print("Error: ensurepip not available.", file=sys.stderr)
+                print("  On Ubuntu/Debian: sudo apt install python3-venv", file=sys.stderr)
+                print("  On Fedora: sudo dnf install python3-pip", file=sys.stderr)
+            else:
+                print(f"Error: Failed to install pip: {result.stderr}", file=sys.stderr)
         else:
+            # Create pip symlink if it doesn't exist (ensurepip only creates pip3)
+            pip_link = bin_dir / "pip"
+            pip3_bin = bin_dir / "pip3"
+            if not pip_link.exists() and pip3_bin.exists():
+                pip_link.symlink_to("pip3")
             print("done")
     except Exception as e:
         print("failed")
-        print(f"Warning: Failed to install pip: {e}", file=sys.stderr)
+        install_failed = True
+        print(f"Error: Failed to install pip: {e}", file=sys.stderr)
+
+    if install_failed:
+        # Clean up the venv since it won't work properly without pip
+        shutil.rmtree(venv_path, ignore_errors=True)
+        return 1
 
     # Step 6: Install malwi-box package (required for the hook to function)
     print("  Installing malwi-box...", end=" ", flush=True)
@@ -357,19 +380,28 @@ def create_sandboxed_venv(venv_path: Path) -> int:
         )
         if result.returncode != 0:
             print("failed")
-            print(f"Warning: Failed to install malwi-box: {result.stderr}", file=sys.stderr)
+            print(f"Error: Failed to install malwi-box: {result.stderr}", file=sys.stderr)
+            # Clean up the venv since it won't work properly without malwi-box
+            shutil.rmtree(venv_path, ignore_errors=True)
+            return 1
         else:
             print("done")
     except Exception as e:
         print("failed")
-        print(f"Warning: Failed to install malwi-box: {e}", file=sys.stderr)
+        print(f"Error: Failed to install malwi-box: {e}", file=sys.stderr)
+        # Clean up the venv since it won't work properly without malwi-box
+        shutil.rmtree(venv_path, ignore_errors=True)
+        return 1
 
     # Print success message
     print(f"\nDone! Sandboxed venv created at: {venv_path}")
     print(f"\nUsage:")
     print(f"  source {venv_path}/bin/activate")
     print(f"  {venv_path}/bin/python -c \"print('hello')\"")
-    print(f"\nSandbox is enabled by default. To disable: export MALWI_BOX_ENABLED=0")
-    print(f"Config: .malwi-box.toml (in current working directory)")
+    print(f"\nEnvironment variables:")
+    print(f"  MALWI_BOX_ENABLED=0      Disable sandbox")
+    print(f"  MALWI_BOX_MODE=review    Interactive approval mode")
+    print(f"  MALWI_BOX_MODE=force     Log violations without blocking")
+    print(f"  MALWI_BOX_CONFIG=<path>  Path to config file")
 
     return 0
