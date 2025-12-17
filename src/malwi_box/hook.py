@@ -107,25 +107,23 @@ def _log_blocked(event: str, args: tuple) -> None:
 def _prompt_approval() -> str:
     """Prompt for approval using direct terminal I/O.
 
-    Uses /dev/tty to avoid conflicts with user code that may be
-    writing to stdout (e.g., loading animations with \\r).
-    Falls back to input() when stdin is piped (e.g., tests, CI).
+    Tries /dev/tty first for interactive approval (works even if stdin is closed,
+    which happens in subprocesses). Falls back to stdin for piped input (tests, CI).
     """
     # Clear line to ensure prompt is visible over progress bars
     prompt = f"{Color.CLEAR_LINE}Approve? [Y/n/i]: "
 
-    # If stdin is piped, use input() to read from it
-    if not sys.stdin.isatty():
-        return input(prompt).strip().lower()
-
+    # Try /dev/tty first - works even if stdin is closed (e.g., subprocesses)
     try:
         with open("/dev/tty", "r") as tty_in, open("/dev/tty", "w") as tty_out:
             tty_out.write(prompt)
             tty_out.flush()
             return tty_in.readline().strip().lower()
     except OSError:
-        # Fallback for environments without /dev/tty
-        return input(prompt).strip().lower()
+        pass  # /dev/tty not available, try stdin
+
+    # Fall back to stdin (for piped input in tests/CI)
+    return input(prompt).strip().lower()
 
 
 # =============================================================================
