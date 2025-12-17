@@ -1,5 +1,6 @@
 """Virtual environment creation with sandboxed Python wrapper."""
 
+import os
 import re
 import shutil
 import subprocess
@@ -336,11 +337,15 @@ def _install_pip(bin_dir: Path) -> tuple[bool, str | None]:
         Tuple of (success, error_message).
     """
     python_bin = bin_dir / "python"
+    # Disable sandbox for internal setup operations
+    env = os.environ.copy()
+    env["MALWI_BOX_ENABLED"] = "0"
     try:
         result = subprocess.run(
             [str(python_bin), "-m", "ensurepip", "--upgrade"],
             capture_output=True,
             text=True,
+            env=env,
         )
         if result.returncode != 0:
             if "No module named ensurepip" in result.stderr:
@@ -368,11 +373,15 @@ def _install_package(bin_dir: Path, package: str) -> tuple[bool, str | None]:
         Tuple of (success, error_message).
     """
     python_bin = bin_dir / "python"
+    # Disable sandbox for internal setup operations
+    env = os.environ.copy()
+    env["MALWI_BOX_ENABLED"] = "0"
     try:
         result = subprocess.run(
             [str(python_bin), "-m", "pip", "install", package, "-q"],
             capture_output=True,
             text=True,
+            env=env,
         )
         if result.returncode != 0:
             return False, f"Failed to install {package}: {result.stderr}"
@@ -388,11 +397,15 @@ def _copy_wrapper_to_package(bin_dir: Path) -> None:
     Non-fatal if it fails.
     """
     python_bin = bin_dir / "python"
+    # Disable sandbox for internal setup operations
+    env = os.environ.copy()
+    env["MALWI_BOX_ENABLED"] = "0"
     try:
         result = subprocess.run(
             [str(python_bin), "-c", "import malwi_box; print(malwi_box.__file__)"],
             capture_output=True,
             text=True,
+            env=env,
         )
         if result.returncode == 0:
             package_dir = Path(result.stdout.strip()).parent

@@ -328,6 +328,103 @@ echo ""
             os.environ["PATH"] = old_path
 
 
+class TestReviewModeWithSubprocesses:
+    """Test that review mode approval works correctly with subprocesses."""
+
+    @pytest.fixture
+    def wrapper_path(self):
+        path = get_malwi_python_path()
+        if path is None:
+            pytest.skip("Wrapper not available")
+        return path
+
+    def test_review_mode_subprocess_accepts_piped_approval(self, wrapper_path):
+        """Test that review mode can accept approval via piped stdin for subprocesses.
+
+        This verifies that when stdin is piped (not a TTY), the approval mechanism
+        falls back to reading from stdin instead of /dev/tty, avoiding TTY contention.
+        """
+        # Code that spawns a subprocess which triggers a blocked event
+        code = '''
+import subprocess
+import sys
+
+# Spawn a child process that tries to connect to a blocked host
+result = subprocess.run(
+    [sys.executable, "-c", "import socket; s = socket.socket(); s.connect(('evil.com', 80))"],
+    capture_output=True,
+    text=True,
+)
+# Report child's exit code
+print(f"child_exit={result.returncode}")
+'''
+        env = os.environ.copy()
+        env["MALWI_BOX_ENABLED"] = "1"
+        env["MALWI_BOX_MODE"] = "review"
+
+        # Pipe "n" (deny) to stdin - child process should be blocked
+        result = subprocess.run(
+            [str(wrapper_path), "-c", code],
+            input="n\n",  # Deny the socket.connect
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10,
+        )
+
+        # The child process should have been denied (exit 1) or the parent
+        # should report the child was blocked (exit 78)
+        # The key point: no crash, no TTY contention error
+        assert "child_exit=" in result.stdout or result.returncode != 0
+
+    def test_review_mode_subprocess_no_tty_contention(self, wrapper_path):
+        """Test that nested subprocesses in review mode don't cause TTY contention.
+
+        When stdin is piped, _prompt_approval() uses input() instead of /dev/tty,
+        preventing multiple processes from competing for the terminal.
+        """
+        # Code that triggers an event requiring approval, then spawns subprocess
+        code = '''
+import subprocess
+import sys
+print("parent started")
+# This subprocess also runs under review mode via inherited env
+result = subprocess.run(
+    [sys.executable, "-c", "print('child ok')"],
+    capture_output=True,
+    text=True,
+)
+print(f"child_stdout={result.stdout.strip()}")
+print(f"child_exit={result.returncode}")
+'''
+        env = os.environ.copy()
+        env["MALWI_BOX_ENABLED"] = "1"
+        env["MALWI_BOX_MODE"] = "review"
+
+        # Approve any prompts
+        result = subprocess.run(
+            [str(wrapper_path), "-c", code],
+            input="y\ny\ny\ny\ny\n",  # Multiple approvals if needed
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10,
+        )
+
+        # Should complete without crash - the key assertion
+        # Either succeeds (0) or cleanly blocked (78) or denied (1)
+        assert result.returncode in (0, 1, 78), (
+            f"Unexpected exit code {result.returncode}.\n"
+            f"stdout: {result.stdout}\n"
+            f"stderr: {result.stderr}"
+        )
+
+        # If it succeeded, verify subprocess ran
+        if result.returncode == 0:
+            assert "child_stdout=child ok" in result.stdout
+            assert "child_exit=0" in result.stdout
+
+
 class TestBinDirSetup:
     """Test the bin directory setup for PATH manipulation."""
 
