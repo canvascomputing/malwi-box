@@ -1,4 +1,4 @@
-"""Tests for the Python wrapper (malwi_python) subprocess injection."""
+"""Tests for the malwi_python wrapper binary and sandbox injection."""
 
 import os
 import subprocess
@@ -423,6 +423,74 @@ print(f"child_exit={result.returncode}")
         if result.returncode == 0:
             assert "child_stdout=child ok" in result.stdout
             assert "child_exit=0" in result.stdout
+
+    def test_review_mode_eof_blocks_with_exit_78(self, wrapper_path):
+        """Test that EOF in review mode results in exit code 78 (blocked), not 130 (aborted).
+
+        When a subprocess in review mode has no stdin (EOF), it should block the action
+        with exit code 78 rather than treating it as user abort (exit code 130).
+        """
+        # Code that triggers an event requiring approval
+        code = "import socket; s = socket.socket(); s.connect(('evil.com', 80))"
+
+        env = os.environ.copy()
+        env["MALWI_BOX_ENABLED"] = "1"
+        env["MALWI_BOX_MODE"] = "review"
+
+        # Close stdin completely (no input at all) - simulates subprocess with no stdin
+        result = subprocess.run(
+            [str(wrapper_path), "-c", code],
+            stdin=subprocess.DEVNULL,  # EOF immediately
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10,
+        )
+
+        # Should exit with 78 (blocked) not 130 (aborted)
+        assert result.returncode == 78, (
+            f"Expected exit code 78 (blocked), got {result.returncode}.\n"
+            f"stdout: {result.stdout}\n"
+            f"stderr: {result.stderr}"
+        )
+
+        # Should show "Blocked" message, not "Aborted"
+        assert "Blocked" in result.stderr, (
+            f"Expected 'Blocked' in stderr, got:\n{result.stderr}"
+        )
+        assert "Aborted" not in result.stderr, (
+            f"Should not show 'Aborted' for EOF, got:\n{result.stderr}"
+        )
+
+    def test_review_mode_piped_denial_blocks_action(self, wrapper_path):
+        """Test that piped 'n' denial in review mode blocks the action.
+
+        When stdin is piped with 'n', the action should be denied and exit with code 1.
+        """
+        # Code that triggers an event requiring approval
+        code = "import socket; s = socket.socket(); s.connect(('evil.com', 80))"
+
+        env = os.environ.copy()
+        env["MALWI_BOX_ENABLED"] = "1"
+        env["MALWI_BOX_MODE"] = "review"
+
+        # Pipe "n" to deny the action
+        result = subprocess.run(
+            [str(wrapper_path), "-c", code],
+            input="n\n",
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10,
+        )
+
+        # Should exit with 1 (denied by user)
+        assert result.returncode == 1, (
+            f"Expected exit code 1 (denied), got {result.returncode}.\n"
+            f"stdout: {result.stdout}\n"
+            f"stderr: {result.stderr}"
+        )
+        assert "Denied" in result.stderr
 
 
 class TestBinDirSetup:

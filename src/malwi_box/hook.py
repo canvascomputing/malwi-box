@@ -377,11 +377,18 @@ def setup_review_hook(engine: BoxEngine | None = None) -> None:
             while True:
                 try:
                     response = _prompt_approval()
-                except (EOFError, KeyboardInterrupt):
+                except KeyboardInterrupt:
+                    # User explicitly aborted with Ctrl+C
                     print(f"\n{Color.YELLOW}Aborted{Color.RESET}", file=sys.stderr)
                     sys.stderr.flush()
                     engine.save_decisions()
                     os._exit(130)
+                except EOFError:
+                    # Subprocess with no stdin - block the action
+                    print(f"{Color.YELLOW}Blocked (no stdin for approval){Color.RESET}", file=sys.stderr)
+                    sys.stderr.flush()
+                    engine.save_decisions()
+                    os._exit(78)
 
                 if response == "i":
                     caller_info = get_caller_info()
